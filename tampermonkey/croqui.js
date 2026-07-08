@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trello — Gerador de Croqui
 // @namespace    empresa-croqui
-// @version      6.8
+// @version      6.9
 // @description  Gera folha de croqui a partir do card aberto no Trello
 // @match        https://trello.com/b/*
 // @match        https://trello.com/c/*
@@ -112,8 +112,9 @@
             alertas: []
         };
 
-        // Marcador de croqui marrom (vendas Shopee com data igual à da plataforma)
-        // Tolerante a markdown bold (**Croqui:** marrom ou Croqui: marrom)
+        // Marcador **Croqui:** marrom gravado pelo trello-sync nas vendas Shopee.
+        // Desde a v6.9 não tem efeito visual (cores fixas por modelo) — fica
+        // parseado aqui caso volte a ser usado no futuro.
         if (/Croqui[*\s:]+marrom/i.test(desc)) resultado.croquiMarrom = true;
 
         // Data e hora
@@ -276,7 +277,7 @@
         const btnCroqui = document.createElement("button");
         btnCroqui.id = "btn-croqui";
         btnCroqui.innerText = "📄 Croqui";
-        btnCroqui.title = "Gerar Croqui (Alt+C) — v6.8";
+        btnCroqui.title = "Gerar Croqui (Alt+C) — v6.9";
         Object.assign(btnCroqui.style, {
             position: "fixed", bottom: "20px", right: "120px", zIndex: "999999",
             padding: "10px 14px", borderRadius: "8px", border: "2px solid #f9a825",
@@ -372,12 +373,11 @@
     <div style="background:#2a0000;border:1px solid #ef5350;border-radius:8px;padding:10px 14px;
         margin-bottom:8px;font-size:12px;color:#ef5350">${a}</div>`).join("")}
 
-    ${dataPedido || numPedido || croquiMarrom ? `
+    ${dataPedido || numPedido ? `
     <div style="background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:8px 14px;
         margin-bottom:12px;font-size:11px;color:#aaa;display:flex;gap:16px;flex-wrap:wrap">
         ${numPedido ? `<span>📦 <strong style="color:#fff">${numPedido}</strong></span>` : ""}
         ${dataPedido ? `<span>🕐 <strong style="color:#fff">${dataPedido}</strong></span>` : ""}
-        ${croquiMarrom ? `<span>🩷 <strong style="color:#f48fb1">Croqui rosa</strong></span>` : ""}
     </div>` : ""}
 
     <div style="display:flex;flex-direction:column;gap:13px">
@@ -602,9 +602,10 @@
         // Cores por combinação plataforma + modelo
         // ML 2,80m     → amarelo (#FFD600) + azul cliente
         // ML 2m        → verde  (#00ff01) + preto cliente
-        // Shopee 2,80m → vermelho (#c0392b) + preto cliente
-        // Shopee 2m    → roxo  (#ff00fe) + preto cliente
+        // Shopee 2,80m → verde  (#00ff01) + preto cliente
+        // Shopee 2m    → amarelo (#FFD600) + preto cliente
         // Tráfego      → azul claro (#4fc3f7) + preto cliente
+        // (plataforma se distingue pelo logo no rodapé)
 
         let corCab, corCabTxt, corCliente, corData, corDataTxt;
 
@@ -624,27 +625,21 @@
             corCliente = "#1a1a1a";
             corData    = "#00ff01";  corDataTxt = "#1a1a1a";
         } else if (!isML && !is2m) {
-            // Shopee 2,80m — vermelho e branco
-            corCab     = "#c0392b";  corCabTxt  = "#fff";
+            // Shopee 2,80m — verde e preto
+            corCab     = "#00ff01";  corCabTxt  = "#1a1a1a";
             corCliente = "#1a1a1a";
-            corData    = "#c0392b";  corDataTxt = "#fff";
+            corData    = "#00ff01";  corDataTxt = "#1a1a1a";
         } else {
-            // Shopee 2m — roxo claro e preto
-            corCab     = "#ff00fe";  corCabTxt  = "#1a1a1a";
+            // Shopee 2m — amarelo e preto
+            corCab     = "#FFD600";  corCabTxt  = "#1a1a1a";
             corCliente = "#1a1a1a";
-            corData    = "#ff00fe";  corDataTxt = "#1a1a1a";
+            corData    = "#FFD600";  corDataTxt = "#1a1a1a";
         }
 
-        // Marcador **Croqui:** marrom (vendas Shopee com data igual à da Shopee):
-        // as barras pretas (nome do cliente e tarja 2m) ficam ROSA.
-        // O marcador nos cards continua escrito "marrom" — só a cor exibida mudou.
-        const COR_MARCADA = "#e91e63";
-        const marromAtivo = isShopee && d.croquiMarrom;
-        if (marromAtivo) corCliente = COR_MARCADA;
-
-        // Tarja 2m
-        const corTarja    = marromAtivo ? COR_MARCADA : "#1a1a1a";
-        const corTarjaTxt = marromAtivo ? "#fff" : (isTrafego ? "#4fc3f7" : (isML ? "#00ff01" : "#ff00fe"));
+        // Tarja 2m — sempre preta; texto na cor do modelo 2m da plataforma.
+        // (O marcador **Croqui:** marrom não muda mais cor nenhuma desde a v6.9.)
+        const corTarja    = "#1a1a1a";
+        const corTarjaTxt = isTrafego ? "#4fc3f7" : (isML ? "#00ff01" : "#FFD600");
         const txtTarja    = "MODELO 2mts";
 
         // Logos SVG inline — sem dependência externa
