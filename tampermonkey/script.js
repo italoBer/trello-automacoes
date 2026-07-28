@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Scripts Empresa (Unificado)
 // @namespace    empresa
-// @version      5.2
+// @version      5.3
 // @description  Automações Trello
 // @match        https://trello.com/b/*
 // @grant        GM_xmlhttpRequest
@@ -16,9 +16,13 @@
     // CHANGELOG — edite aqui ao atualizar!
     // =========================
  
-    const VERSAO_ATUAL = "5.2";
+    const VERSAO_ATUAL = "5.3";
 
     const CHANGELOG = {
+        "5.3": [
+            "Auditoria: novo 'Fluxo de cards' — entradas/saídas de uma lista e adicionados/arquivados no quadro, por data (até 1 mês atrás)",
+            "Títulos das seções do menu mais legíveis (cinza mais claro)",
+        ],
         "5.2": [
             "Endereço de atualização migrado para o novo GitHub (italoBer)",
         ],
@@ -624,6 +628,213 @@ ${s1}${s2}${s3}${s4}
 </body></html>`;
 
         w.document.open(); w.document.write(html); w.document.close();
+    }
+
+    // =========================
+    // FLUXO DE CARDS (entradas/saídas)
+    // =========================
+
+    const FLUXO_DIAS_LIMITE = 31; // histórico confiável do Trello: ~1 mês pra trás
+
+    function ymdLocal(d) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const dia = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${dia}`;
+    }
+
+    // Busca as ações do quadro paginando (limite de 1000 por chamada)
+    async function apiActionsPaginado(boardId, filtros, sinceISO, beforeISO) {
+        const filtroStr = filtros.join(",");
+        let todas = [];
+        let before = beforeISO;
+        for (let i = 0; i < 30; i++) { // trava de segurança (até ~30k ações)
+            const lote = await api(
+                `/boards/${boardId}/actions?filter=${filtroStr}&limit=1000` +
+                `&since=${encodeURIComponent(sinceISO)}&before=${encodeURIComponent(before)}`
+            );
+            if (!Array.isArray(lote) || lote.length === 0) break;
+            todas = todas.concat(lote);
+            if (lote.length < 1000) break;
+            before = lote[lote.length - 1].date; // continua a partir da ação mais antiga
+        }
+        return todas;
+    }
+
+    async function fluxoCards() {
+        const boardId = location.pathname.split("/")[2];
+
+        let lists;
+        try { lists = await api(`/boards/${boardId}/lists`); }
+        catch { return alert("❌ Erro ao buscar listas."); }
+
+        if (document.getElementById("overlay-fluxo")) return;
+
+        const hoje = new Date();
+        const hojeISO = ymdLocal(hoje);
+        const minData = new Date(hoje); minData.setDate(hoje.getDate() - FLUXO_DIAS_LIMITE);
+        const minISO = ymdLocal(minData);
+
+        const overlay = document.createElement("div");
+        overlay.id = "overlay-fluxo";
+        Object.assign(overlay.style, {
+            position: "fixed", inset: "0", background: "rgba(0,0,0,0.82)",
+            zIndex: "9999999", display: "flex", alignItems: "center",
+            justifyContent: "center", overflowY: "auto", padding: "20px"
+        });
+
+        const opcoesListas = lists.map(l =>
+            `<option value="${l.id}" data-nome="${l.name.replace(/"/g, "&quot;")}">${l.name}</option>`
+        ).join("");
+
+        overlay.innerHTML = `
+        <div style="background:#111;border:1px solid #333;border-radius:14px;padding:28px 32px;
+            min-width:340px;max-width:440px;width:90%;color:#fff;font-family:'IBM Plex Mono',monospace">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+                <h2 style="font-size:1rem;letter-spacing:2px;color:#f9a825">🔄 FLUXO DE CARDS</h2>
+                <button id="fechar-fluxo" style="background:none;border:none;color:#666;font-size:18px;cursor:pointer">✕</button>
+            </div>
+
+            <label style="color:#aaa;font-size:11px;letter-spacing:1px">DATA</label>
+            <div style="display:flex;gap:8px;margin-top:6px;margin-bottom:16px;align-items:center">
+                <input type="date" id="fx-data" value="${hojeISO}" min="${minISO}" max="${hojeISO}"
+                    style="flex:1;background:#1e1e1e;border:1px solid #444;border-radius:8px;
+                    padding:9px 12px;color:#fff;font-family:inherit;font-size:13px">
+                <button id="fx-hoje" style="background:#1e1e1e;border:1px solid #444;border-radius:8px;
+                    padding:9px 12px;color:#aaa;cursor:pointer;font-family:inherit;font-size:12px;white-space:nowrap">
+                    📌 Hoje
+                </button>
+            </div>
+            <div style="color:#666;font-size:10px;margin-bottom:16px">
+                Hoje conta de 00:00 até agora · outros dias contam o dia inteiro · máx. 1 mês atrás
+            </div>
+
+            <label style="color:#aaa;font-size:11px;letter-spacing:1px">LISTA (opcional)</label>
+            <select id="fx-lista" style="width:100%;background:#1e1e1e;border:1px solid #444;border-radius:8px;
+                padding:9px 12px;color:#fff;font-family:inherit;font-size:13px;margin-top:6px;margin-bottom:20px">
+                <option value="">— Só o quadro (sem lista) —</option>
+                ${opcoesListas}
+            </select>
+
+            <button id="fx-btn" style="width:100%;background:#f9a825;border:none;border-radius:8px;
+                padding:11px;color:#111;font-weight:bold;font-family:inherit;font-size:13px;cursor:pointer;letter-spacing:1px">
+                ANALISAR
+            </button>
+
+            <div id="fx-resultado" style="margin-top:20px;display:none"></div>
+        </div>`;
+
+        document.body.appendChild(overlay);
+        document.getElementById("fechar-fluxo").onclick = () => overlay.remove();
+        overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+        document.getElementById("fx-hoje").onclick = () => {
+            document.getElementById("fx-data").value = hojeISO;
+        };
+
+        document.getElementById("fx-btn").onclick = async () => {
+            const btn = document.getElementById("fx-btn");
+            const resDiv = document.getElementById("fx-resultado");
+            const dataStr = document.getElementById("fx-data").value;
+            if (!dataStr) return alert("❌ Escolha uma data.");
+            if (dataStr < minISO) return alert("❌ Data fora do limite. Escolha até 1 mês atrás.");
+            if (dataStr > hojeISO) return alert("❌ Não dá pra analisar datas futuras.");
+
+            const sel = document.getElementById("fx-lista");
+            const target = sel.value;
+            const nomeLista = target ? sel.options[sel.selectedIndex].dataset.nome : "";
+
+            const [y, m, d] = dataStr.split("-").map(Number);
+            const start = new Date(y, m - 1, d, 0, 0, 0, 0);
+            const ehHoje = dataStr === hojeISO;
+            const end = ehHoje ? new Date() : new Date(y, m - 1, d, 23, 59, 59, 999);
+
+            btn.disabled = true;
+            btn.innerText = "ANALISANDO...";
+            btn.style.opacity = "0.6";
+
+            try {
+                const filtros = [
+                    "createCard", "updateCard", "copyCard",
+                    "moveCardToBoard", "moveCardFromBoard",
+                    "deleteCard", "emailCard", "convertToCardFromCheckItem"
+                ];
+                const acoes = await apiActionsPaginado(
+                    boardId, filtros, start.toISOString(), end.toISOString()
+                );
+
+                let entrou = 0, saiu = 0, addQuadro = 0, arqQuadro = 0;
+
+                for (const a of acoes) {
+                    const t = new Date(a.date);
+                    if (t < start || t > end) continue;
+                    const dt = a.data || {};
+                    const type = a.type;
+
+                    const ehCriacao = type === "createCard" || type === "copyCard" ||
+                        type === "emailCard" || type === "convertToCardFromCheckItem" ||
+                        type === "moveCardToBoard";
+                    const ehArquivar = type === "updateCard" &&
+                        dt.old && dt.old.closed === false &&
+                        dt.card && dt.card.closed === true;
+
+                    // Quadro inteiro
+                    if (ehCriacao) addQuadro++;
+                    if (ehArquivar) arqQuadro++;
+
+                    // Lista específica
+                    if (target) {
+                        if (ehCriacao && dt.list && dt.list.id === target) entrou++;
+                        if (type === "updateCard" && dt.listAfter && dt.listBefore) {
+                            if (dt.listAfter.id === target) entrou++;
+                            if (dt.listBefore.id === target) saiu++;
+                        }
+                        if (ehArquivar && dt.list && dt.list.id === target) saiu++;
+                        if ((type === "moveCardFromBoard" || type === "deleteCard") &&
+                            dt.list && dt.list.id === target) saiu++;
+                    }
+                }
+
+                const periodo = ehHoje
+                    ? `hoje, 00:00 até ${end.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`
+                    : `${d.toString().padStart(2, "0")}/${m.toString().padStart(2, "0")}/${y} (dia inteiro)`;
+
+                const bloco = (icone, label, valor) => `
+                    <div style="display:flex;justify-content:space-between;align-items:center;
+                        background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 14px">
+                        <span style="color:#bbb;font-size:12px">${icone} ${label}</span>
+                        <span style="color:#f9a825;font-size:1.3rem;font-weight:bold">${valor}</span>
+                    </div>`;
+
+                let html = `
+                    <div style="color:#8a8a8a;font-size:10px;letter-spacing:1px;margin-bottom:10px;text-transform:uppercase">
+                        📆 ${periodo}
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:8px">
+                        ${bloco("📥", "Adicionados no quadro", addQuadro)}
+                        ${bloco("📦", "Arquivados no quadro", arqQuadro)}`;
+
+                if (target) {
+                    const nomeCurto = nomeLista.length > 22 ? nomeLista.slice(0, 21) + "…" : nomeLista;
+                    html += `
+                        <div style="height:1px;background:#2a2a2a;margin:4px 0"></div>
+                        <div style="color:#777;font-size:10px;letter-spacing:1px">LISTA: ${nomeCurto.toUpperCase()}</div>
+                        ${bloco("➡️", "Entraram na lista", entrou)}
+                        ${bloco("⬅️", "Saíram da lista", saiu)}`;
+                }
+                html += `</div>`;
+
+                resDiv.innerHTML = html;
+                resDiv.style.display = "block";
+
+            } catch (err) {
+                alert("❌ Erro ao buscar atividades do quadro.");
+                console.error(err);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "ANALISAR";
+                btn.style.opacity = "1";
+            }
+        };
     }
 
     // =========================
@@ -1257,7 +1468,7 @@ ${s1}${s2}${s3}${s4}
         });
         const menuTitulo = document.createElement("span");
         menuTitulo.innerText = `⚙️ Scripts Empresa v${VERSAO_ATUAL}`;
-        Object.assign(menuTitulo.style, { color: "#555", fontSize: "10px", letterSpacing: "1.5px", textTransform: "uppercase" });
+        Object.assign(menuTitulo.style, { color: "#9a9a9a", fontSize: "10px", letterSpacing: "1.5px", textTransform: "uppercase" });
 
         const btnCredMenu = document.createElement("button");
         btnCredMenu.innerText = "🔑";
@@ -1279,7 +1490,7 @@ ${s1}${s2}${s3}${s4}
         function sep(label) {
             const el = document.createElement("div");
             el.innerText = label;
-            Object.assign(el.style, { color:"#555", fontSize:"10px", letterSpacing:"1.5px", padding:"8px 4px 2px", textTransform:"uppercase" });
+            Object.assign(el.style, { color:"#9a9a9a", fontSize:"10px", letterSpacing:"1.5px", padding:"8px 4px 2px", textTransform:"uppercase" });
             return el;
         }
 
@@ -1299,6 +1510,7 @@ ${s1}${s2}${s3}${s4}
             ]},
             { label: "🔎 Auditoria", itens: [
                 { id:"btn-aud",   label:"🔎 Auditar quadro",  fn: auditarAtual },
+                { id:"btn-fluxo", label:"🔄 Fluxo de cards",  fn: fluxoCards },
                 { id:"btn-listas", label:"🚨 Listas lotadas",  fn: alertaListasLotadas },
             ]},
         ];

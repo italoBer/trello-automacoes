@@ -30,15 +30,21 @@ Detecta automaticamente se você está no Mercado Livre ou na Shopee e cria card
 
 ---
 
-### `script.js` — Painel de Ferramentas ML
-Painel de utilidades para o dia a dia no Mercado Livre.
+### `script.js` — Painel de Ferramentas (Trello)
+Painel de utilidades para o dia a dia nos quadros do Trello (ML e Shopee). Acesse pelo botão flutuante **⚙️** no canto inferior direito.
 
 **Funcionalidades:**
-- Métricas de vendas
-- Abertura rápida de links
-- Outras automações do fluxo operacional
+- **Atendimento:** abrir chats do ML em lote (por lista ou por data)
+- **Métricas:** volume de cards por dia (ML e Shopee, 7/14 dias) com exportação CSV
+- **Distribuição:** mover cards entre listas (divisão igual ou manual, filtro por data)
+- **Auditoria:**
+  - Auditar quadro (títulos/links duplicados, cards sem link ou sem data)
+  - **Fluxo de cards** — quantos **entraram/saíram** de uma lista e quantos foram **adicionados/arquivados** no quadro, escolhendo a data num calendário (padrão hoje, de 00:00 até o momento; até 1 mês atrás)
+  - Alerta de listas lotadas
+- Credenciais salvas localmente (nunca vão ao GitHub)
+- Auto-update via GitHub
 
-**Ativa em:** `https://www.mercadolivre.com.br/*`
+**Ativa em:** `https://trello.com/b/*`
 
 ---
 
