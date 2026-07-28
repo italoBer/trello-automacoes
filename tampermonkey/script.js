@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Scripts Empresa (Unificado)
 // @namespace    empresa
-// @version      5.3
+// @version      5.4
 // @description  Automações Trello
 // @match        https://trello.com/b/*
 // @grant        GM_xmlhttpRequest
@@ -16,9 +16,14 @@
     // CHANGELOG — edite aqui ao atualizar!
     // =========================
  
-    const VERSAO_ATUAL = "5.3";
+    const VERSAO_ATUAL = "5.4";
 
     const CHANGELOG = {
+        "5.4": [
+            "Fluxo de cards: modo 'Por lista' puxa só a lista selecionada (bem mais rápido)",
+            "Fluxo de cards: lista analisada fica salva no histórico e já pré-selecionada",
+            "Fluxo de cards: 'Quadro inteiro' virou opção à parte",
+        ],
         "5.3": [
             "Auditoria: novo 'Fluxo de cards' — entradas/saídas de uma lista e adicionados/arquivados no quadro, por data (até 1 mês atrás)",
             "Títulos das seções do menu mais legíveis (cinza mais claro)",
@@ -643,14 +648,15 @@ ${s1}${s2}${s3}${s4}
         return `${y}-${m}-${dia}`;
     }
 
-    // Busca as ações do quadro paginando (limite de 1000 por chamada)
-    async function apiActionsPaginado(boardId, filtros, sinceISO, beforeISO) {
+    // Busca as ações paginando (limite de 1000 por chamada).
+    // basePath: "/lists/{id}" (rápido, só a lista) ou "/boards/{id}" (quadro inteiro)
+    async function apiActionsPaginado(basePath, filtros, sinceISO, beforeISO) {
         const filtroStr = filtros.join(",");
         let todas = [];
         let before = beforeISO;
         for (let i = 0; i < 30; i++) { // trava de segurança (até ~30k ações)
             const lote = await api(
-                `/boards/${boardId}/actions?filter=${filtroStr}&limit=1000` +
+                `${basePath}/actions?filter=${filtroStr}&limit=1000` +
                 `&since=${encodeURIComponent(sinceISO)}&before=${encodeURIComponent(before)}`
             );
             if (!Array.isArray(lote) || lote.length === 0) break;
@@ -683,10 +689,6 @@ ${s1}${s2}${s3}${s4}
             justifyContent: "center", overflowY: "auto", padding: "20px"
         });
 
-        const opcoesListas = lists.map(l =>
-            `<option value="${l.id}" data-nome="${l.name.replace(/"/g, "&quot;")}">${l.name}</option>`
-        ).join("");
-
         overlay.innerHTML = `
         <div style="background:#111;border:1px solid #333;border-radius:14px;padding:28px 32px;
             min-width:340px;max-width:440px;width:90%;color:#fff;font-family:'IBM Plex Mono',monospace">
@@ -709,12 +711,25 @@ ${s1}${s2}${s3}${s4}
                 Hoje conta de 00:00 até agora · outros dias contam o dia inteiro · máx. 1 mês atrás
             </div>
 
-            <label style="color:#aaa;font-size:11px;letter-spacing:1px">LISTA (opcional)</label>
-            <select id="fx-lista" style="width:100%;background:#1e1e1e;border:1px solid #444;border-radius:8px;
-                padding:9px 12px;color:#fff;font-family:inherit;font-size:13px;margin-top:6px;margin-bottom:20px">
-                <option value="">— Só o quadro (sem lista) —</option>
-                ${opcoesListas}
-            </select>
+            <label style="color:#aaa;font-size:11px;letter-spacing:1px">O QUE ANALISAR</label>
+            <div style="display:flex;gap:12px;margin-top:6px;margin-bottom:12px">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:#ccc;font-size:12px">
+                    <input type="radio" name="fx-modo" id="fx-modo-lista" value="lista" checked
+                        style="accent-color:#f9a825"> 📋 Por lista
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:#ccc;font-size:12px">
+                    <input type="radio" name="fx-modo" id="fx-modo-quadro" value="quadro"
+                        style="accent-color:#f9a825"> 🌐 Quadro inteiro
+                </label>
+            </div>
+
+            <div id="fx-lista-wrap">
+                <label style="color:#aaa;font-size:11px;letter-spacing:1px">LISTA</label>
+                <select id="fx-lista" style="width:100%;background:#1e1e1e;border:1px solid #444;border-radius:8px;
+                    padding:9px 12px;color:#fff;font-family:inherit;font-size:13px;margin-top:6px;margin-bottom:20px">
+                    ${renderSelectComRecentes(lists, "fx-lista")}
+                </select>
+            </div>
 
             <button id="fx-btn" style="width:100%;background:#f9a825;border:none;border-radius:8px;
                 padding:11px;color:#111;font-weight:bold;font-family:inherit;font-size:13px;cursor:pointer;letter-spacing:1px">
@@ -731,6 +746,15 @@ ${s1}${s2}${s3}${s4}
             document.getElementById("fx-data").value = hojeISO;
         };
 
+        // Alterna a exibição do seletor de lista conforme o modo
+        const listaWrap = document.getElementById("fx-lista-wrap");
+        document.querySelectorAll('input[name="fx-modo"]').forEach(r => {
+            r.onchange = () => {
+                listaWrap.style.display =
+                    document.getElementById("fx-modo-lista").checked ? "block" : "none";
+            };
+        });
+
         document.getElementById("fx-btn").onclick = async () => {
             const btn = document.getElementById("fx-btn");
             const resDiv = document.getElementById("fx-resultado");
@@ -739,9 +763,12 @@ ${s1}${s2}${s3}${s4}
             if (dataStr < minISO) return alert("❌ Data fora do limite. Escolha até 1 mês atrás.");
             if (dataStr > hojeISO) return alert("❌ Não dá pra analisar datas futuras.");
 
+            const modo = document.querySelector('input[name="fx-modo"]:checked').value;
             const sel = document.getElementById("fx-lista");
-            const target = sel.value;
+            const target = modo === "lista" ? sel.value : "";
             const nomeLista = target ? sel.options[sel.selectedIndex].dataset.nome : "";
+
+            if (modo === "lista" && !target) return alert("❌ Selecione uma lista.");
 
             const [y, m, d] = dataStr.split("-").map(Number);
             const start = new Date(y, m - 1, d, 0, 0, 0, 0);
@@ -758,8 +785,10 @@ ${s1}${s2}${s3}${s4}
                     "moveCardToBoard", "moveCardFromBoard",
                     "deleteCard", "emailCard", "convertToCardFromCheckItem"
                 ];
+                // Por lista → só as ações da lista (rápido). Quadro → ações do board.
+                const basePath = modo === "lista" ? `/lists/${target}` : `/boards/${boardId}`;
                 const acoes = await apiActionsPaginado(
-                    boardId, filtros, start.toISOString(), end.toISOString()
+                    basePath, filtros, start.toISOString(), end.toISOString()
                 );
 
                 let entrou = 0, saiu = 0, addQuadro = 0, arqQuadro = 0;
@@ -777,12 +806,10 @@ ${s1}${s2}${s3}${s4}
                         dt.old && dt.old.closed === false &&
                         dt.card && dt.card.closed === true;
 
-                    // Quadro inteiro
-                    if (ehCriacao) addQuadro++;
-                    if (ehArquivar) arqQuadro++;
-
-                    // Lista específica
-                    if (target) {
+                    if (modo === "quadro") {
+                        if (ehCriacao) addQuadro++;
+                        if (ehArquivar) arqQuadro++;
+                    } else {
                         if (ehCriacao && dt.list && dt.list.id === target) entrou++;
                         if (type === "updateCard" && dt.listAfter && dt.listBefore) {
                             if (dt.listAfter.id === target) entrou++;
@@ -793,6 +820,9 @@ ${s1}${s2}${s3}${s4}
                             dt.list && dt.list.id === target) saiu++;
                     }
                 }
+
+                // Salva a lista analisada no histórico (fica pré-selecionada da próxima vez)
+                if (modo === "lista") salvarListaRecente(target, nomeLista);
 
                 const periodo = ehHoje
                     ? `hoje, 00:00 até ${end.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`
@@ -809,15 +839,16 @@ ${s1}${s2}${s3}${s4}
                     <div style="color:#8a8a8a;font-size:10px;letter-spacing:1px;margin-bottom:10px;text-transform:uppercase">
                         📆 ${periodo}
                     </div>
-                    <div style="display:flex;flex-direction:column;gap:8px">
+                    <div style="display:flex;flex-direction:column;gap:8px">`;
+
+                if (modo === "quadro") {
+                    html += `
                         ${bloco("📥", "Adicionados no quadro", addQuadro)}
                         ${bloco("📦", "Arquivados no quadro", arqQuadro)}`;
-
-                if (target) {
+                } else {
                     const nomeCurto = nomeLista.length > 22 ? nomeLista.slice(0, 21) + "…" : nomeLista;
                     html += `
-                        <div style="height:1px;background:#2a2a2a;margin:4px 0"></div>
-                        <div style="color:#777;font-size:10px;letter-spacing:1px">LISTA: ${nomeCurto.toUpperCase()}</div>
+                        <div style="color:#777;font-size:10px;letter-spacing:1px;margin-bottom:2px">LISTA: ${nomeCurto.toUpperCase()}</div>
                         ${bloco("➡️", "Entraram na lista", entrou)}
                         ${bloco("⬅️", "Saíram da lista", saiu)}`;
                 }
@@ -827,7 +858,7 @@ ${s1}${s2}${s3}${s4}
                 resDiv.style.display = "block";
 
             } catch (err) {
-                alert("❌ Erro ao buscar atividades do quadro.");
+                alert("❌ Erro ao buscar atividades.");
                 console.error(err);
             } finally {
                 btn.disabled = false;

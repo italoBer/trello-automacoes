@@ -39,7 +39,7 @@ Painel de utilidades para o dia a dia nos quadros do Trello (ML e Shopee). Acess
 - **Distribuição:** mover cards entre listas (divisão igual ou manual, filtro por data)
 - **Auditoria:**
   - Auditar quadro (títulos/links duplicados, cards sem link ou sem data)
-  - **Fluxo de cards** — quantos **entraram/saíram** de uma lista e quantos foram **adicionados/arquivados** no quadro, escolhendo a data num calendário (padrão hoje, de 00:00 até o momento; até 1 mês atrás)
+  - **Fluxo de cards** — por data (calendário; padrão hoje de 00:00 até o momento, até 1 mês atrás). Dois modos: **Por lista** (só a lista selecionada, mais rápido — mostra quantos **entraram/saíram**; a última lista fica salva e pré-selecionada) e **Quadro inteiro** (**adicionados/arquivados** no board)
   - Alerta de listas lotadas
 - Credenciais salvas localmente (nunca vão ao GitHub)
 - Auto-update via GitHub
