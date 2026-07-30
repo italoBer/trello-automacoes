@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Trello — Gerador de Croqui
 // @namespace    empresa-croqui
-// @version      7.2
+// @version      7.3
 // @description  Gera folha de croqui a partir do card aberto no Trello
 // @match        https://trello.com/b/*
 // @match        https://trello.com/c/*
 // @grant        GM_xmlhttpRequest
+// @connect      api.trello.com
 // @updateURL    https://raw.githubusercontent.com/italoBer/trello-automacoes/refs/heads/main/tampermonkey/croqui.js
 // @downloadURL  https://raw.githubusercontent.com/italoBer/trello-automacoes/refs/heads/main/tampermonkey/croqui.js
 // ==/UserScript==

@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         ML — Painel de Atendimento
 // @namespace    empresa-ml-chat
-// @version      3.6
+// @version      3.7
 // @description  Painel de ações no chat do cliente ML
 // @match        https://www.mercadolivre.com.br/vendas/*/mensagens*
 // @grant        GM_xmlhttpRequest
+// @connect      api.trello.com
 // @updateURL    https://raw.githubusercontent.com/italoBer/trello-automacoes/refs/heads/main/tampermonkey/ml-chat.js
 // @downloadURL  https://raw.githubusercontent.com/italoBer/trello-automacoes/refs/heads/main/tampermonkey/ml-chat.js
 // ==/UserScript==

@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Scripts Empresa (Unificado)
 // @namespace    empresa
-// @version      5.4
+// @version      5.5
 // @description  Automações Trello
 // @match        https://trello.com/b/*
 // @grant        GM_xmlhttpRequest
+// @connect      api.trello.com
 // @updateURL    https://raw.githubusercontent.com/italoBer/trello-automacoes/refs/heads/main/tampermonkey/script.js
 // @downloadURL  https://raw.githubusercontent.com/italoBer/trello-automacoes/refs/heads/main/tampermonkey/script.js
 // ==/UserScript==
@@ -16,9 +17,12 @@
     // CHANGELOG — edite aqui ao atualizar!
     // =========================
  
-    const VERSAO_ATUAL = "5.4";
+    const VERSAO_ATUAL = "5.5";
 
     const CHANGELOG = {
+        "5.5": [
+            "Correção: em alguns PCs o Tampermonkey bloqueava a conexão com a API (erro ao buscar dados) — agora liberado via @connect",
+        ],
         "5.4": [
             "Fluxo de cards: modo 'Por lista' puxa só a lista selecionada (bem mais rápido)",
             "Fluxo de cards: lista analisada fica salva no histórico e já pré-selecionada",
