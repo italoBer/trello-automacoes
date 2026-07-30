@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trello — Gerador de Croqui
 // @namespace    empresa-croqui
-// @version      7.3
+// @version      7.4
 // @description  Gera folha de croqui a partir do card aberto no Trello
 // @match        https://trello.com/b/*
 // @match        https://trello.com/c/*
@@ -74,16 +74,20 @@
         return m ? m[1] : _lastShortLink;
     }
 
+    // fetch nativo primeiro (não depende do Tampermonkey); GM de reserva p/ CSP restritiva
     function apiGet(path) {
-        return new Promise((resolve, reject) => {
-            const sep = path.includes("?") ? "&" : "?";
-            GM_xmlhttpRequest({
-                method: "GET",
-                url: `https://api.trello.com/1${path}${sep}key=${getKey()}&token=${getToken()}`,
-                onload: r => { try { resolve(JSON.parse(r.responseText)); } catch(e) { reject(e); } },
-                onerror: reject
-            });
-        });
+        const sep = path.includes("?") ? "&" : "?";
+        const url = `https://api.trello.com/1${path}${sep}key=${getKey()}&token=${getToken()}`;
+        return fetch(url)
+            .then(r => r.text().then(t => t ? JSON.parse(t) : {}))
+            .catch(() => new Promise((resolve, reject) => {
+                if (typeof GM_xmlhttpRequest === "undefined") return reject(new Error("sem rede"));
+                GM_xmlhttpRequest({
+                    method: "GET", url,
+                    onload: r => { try { resolve(JSON.parse(r.responseText)); } catch(e) { reject(e); } },
+                    onerror: reject
+                });
+            }));
     }
 
     // =========================

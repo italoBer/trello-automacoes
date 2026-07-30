@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Scripts Empresa (Unificado)
 // @namespace    empresa
-// @version      5.5
+// @version      5.6
 // @description  Automações Trello
 // @match        https://trello.com/b/*
 // @grant        GM_xmlhttpRequest
@@ -17,11 +17,14 @@
     // CHANGELOG — edite aqui ao atualizar!
     // =========================
  
-    const VERSAO_ATUAL = "5.5";
+    const VERSAO_ATUAL = "5.6";
 
     const CHANGELOG = {
+        "5.6": [
+            "Correção importante: chamadas à API agora usam fetch nativo (o GM_xmlhttpRequest do Tampermonkey quebrava em alguns PCs com o Chrome novo, causando 'erro ao buscar dados')",
+        ],
         "5.5": [
-            "Correção: em alguns PCs o Tampermonkey bloqueava a conexão com a API (erro ao buscar dados) — agora liberado via @connect",
+            "Preparação da correção de conexão (@connect api.trello.com)",
         ],
         "5.4": [
             "Fluxo de cards: modo 'Por lista' puxa só a lista selecionada (bem mais rápido)",
@@ -185,16 +188,40 @@
     // API
     // =========================
 
+    // Leitura (GET) — usa fetch nativo (rede da própria página, não depende do
+    // Tampermonkey). GM_xmlhttpRequest fica de reserva p/ páginas com CSP restritiva.
     function api(path) {
-        return new Promise((resolve, reject) => {
-            const sep = path.includes("?") ? "&" : "?";
-            GM_xmlhttpRequest({
-                method: "GET",
-                url: `https://api.trello.com/1${path}${sep}key=${API_KEY}&token=${API_TOKEN}`,
-                onload: res => { try { resolve(JSON.parse(res.responseText)); } catch(e) { reject(e); } },
-                onerror: reject
-            });
-        });
+        const sep = path.includes("?") ? "&" : "?";
+        const url = `https://api.trello.com/1${path}${sep}key=${API_KEY}&token=${API_TOKEN}`;
+        return fetch(url)
+            .then(r => r.text().then(t => t ? JSON.parse(t) : {}))
+            .catch(() => new Promise((resolve, reject) => {
+                if (typeof GM_xmlhttpRequest === "undefined") return reject(new Error("sem rede"));
+                GM_xmlhttpRequest({
+                    method: "GET", url,
+                    onload: res => { try { resolve(JSON.parse(res.responseText)); } catch(e) { reject(e); } },
+                    onerror: reject
+                });
+            }));
+    }
+
+    // Escrita (PUT/POST/DELETE) — mesma estratégia: fetch primeiro, GM de reserva.
+    function apiWrite(method, path, body) {
+        const sep = path.includes("?") ? "&" : "?";
+        const url = `https://api.trello.com/1${path}${sep}key=${API_KEY}&token=${API_TOKEN}`;
+        const opts = { method, headers: { "Content-Type": "application/json" } };
+        if (body) opts.body = JSON.stringify(body);
+        return fetch(url, opts)
+            .then(r => r.text().then(t => t ? JSON.parse(t) : {}))
+            .catch(() => new Promise((resolve, reject) => {
+                if (typeof GM_xmlhttpRequest === "undefined") return reject(new Error("sem rede"));
+                GM_xmlhttpRequest({
+                    method, url, headers: { "Content-Type": "application/json" },
+                    data: body ? JSON.stringify(body) : undefined,
+                    onload: r => { try { resolve(r.responseText ? JSON.parse(r.responseText) : {}); } catch(e) { reject(e); } },
+                    onerror: reject
+                });
+            }));
     }
 
     // =========================
@@ -1385,16 +1412,7 @@ ${s1}${s2}${s3}${s4}
                 idx += dest.qtd;
                 for (const card of lote) {
                     try {
-                        await new Promise((resolve, reject) => {
-                            GM_xmlhttpRequest({
-                                method: "PUT",
-                                url: `https://api.trello.com/1/cards/${card.id}?key=${API_KEY}&token=${API_TOKEN}`,
-                                headers: { "Content-Type": "application/json" },
-                                data: JSON.stringify({ idList: dest.listId }),
-                                onload: r => { try { resolve(JSON.parse(r.responseText)); } catch(e) { reject(e); } },
-                                onerror: reject
-                            });
-                        });
+                        await apiWrite("PUT", `/cards/${card.id}`, { idList: dest.listId });
                         salvarListaRecente(dest.listId, dest.nome);
                     } catch { erros++; }
                 }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ML — Painel de Atendimento
 // @namespace    empresa-ml-chat
-// @version      3.7
+// @version      3.8
 // @description  Painel de ações no chat do cliente ML
 // @match        https://www.mercadolivre.com.br/vendas/*/mensagens*
 // @grant        GM_xmlhttpRequest
@@ -157,20 +157,26 @@
         return true;
     }
 
+    // fetch nativo primeiro (não depende do Tampermonkey); GM de reserva p/ CSP restritiva
     function api(method, path, body) {
-        return new Promise((resolve, reject) => {
-            const sep = path.includes("?") ? "&" : "?";
-            GM_xmlhttpRequest({
-                method,
-                url: `https://api.trello.com/1${path}${sep}key=${getKey()}&token=${getToken()}`,
-                headers: { "Content-Type": "application/json" },
-                data: body ? JSON.stringify(body) : undefined,
-                timeout: 30000,
-                ontimeout: () => reject(new Error("timeout")),
-                onload: r => { try { resolve(JSON.parse(r.responseText)); } catch(e) { reject(e); } },
-                onerror: reject
-            });
-        });
+        const sep = path.includes("?") ? "&" : "?";
+        const url = `https://api.trello.com/1${path}${sep}key=${getKey()}&token=${getToken()}`;
+        const opts = { method, headers: { "Content-Type": "application/json" } };
+        if (body) opts.body = JSON.stringify(body);
+        return fetch(url, opts)
+            .then(r => r.text().then(t => t ? JSON.parse(t) : {}))
+            .catch(() => new Promise((resolve, reject) => {
+                if (typeof GM_xmlhttpRequest === "undefined") return reject(new Error("sem rede"));
+                GM_xmlhttpRequest({
+                    method, url,
+                    headers: { "Content-Type": "application/json" },
+                    data: body ? JSON.stringify(body) : undefined,
+                    timeout: 30000,
+                    ontimeout: () => reject(new Error("timeout")),
+                    onload: r => { try { resolve(r.responseText ? JSON.parse(r.responseText) : {}); } catch(e) { reject(e); } },
+                    onerror: reject
+                });
+            }));
     }
 
     function getVendaId() {
