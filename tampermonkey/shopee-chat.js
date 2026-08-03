@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shopee — Painel de Atendimento
 // @namespace    empresa-shopee-chat
-// @version      1.8
+// @version      1.9
 // @description  Painel de ações no chat da Shopee
 // @match        https://seller.shopee.com.br/new-webchat/*
 // @grant        GM_xmlhttpRequest
@@ -19,37 +19,41 @@
 
     // ID do quadro do Trello — resolvido em tempo de execução, NÃO fica no código
     // (o repositório é público). Ordem: localStorage → auto-detecção pelo nome do
-    // quadro na conta da pessoa → prompt (uma vez; fica salvo na máquina).
+    // quadro na conta. Se não resolver, o painel mostra aviso e o botão ⚙️ deixa
+    // configurar/trocar o quadro a qualquer momento (sem console, sem travar).
     let BOARD_ID = null;
     const CHAVE_BOARD = "sp_chat_board_id";
-    let _boardCancelado = false; // evita pedir em loop se a pessoa cancelar o prompt
 
-    async function resolverBoardId() {
-        if (BOARD_ID) return BOARD_ID;
-        const salvo = localStorage.getItem(CHAVE_BOARD);
-        if (salvo) { BOARD_ID = salvo; return BOARD_ID; }
-        // Auto-detecção: quadro da conta cujo nome contém "shopee"
+    // Aceita tanto o ID puro quanto uma URL colada (trello.com/b/ID/nome)
+    function extrairBoardId(txt) {
+        const t = (txt || "").trim();
+        const m = t.match(/trello\.com\/b\/([^/\s]+)/i);
+        return (m ? m[1] : t).trim();
+    }
+
+    async function detectarBoardAuto() {
         try {
             // filter=open: ignora quadros fechados/arquivados na detecção
             const boards = await api("GET", "/members/me/boards?filter=open&fields=name,shortLink");
             const candidatos = (boards || []).filter(b =>
                 (b.name || "").toLowerCase().includes("shopee")
             );
-            if (candidatos.length === 1) {
-                BOARD_ID = candidatos[0].shortLink;
-                localStorage.setItem(CHAVE_BOARD, BOARD_ID);
-                return BOARD_ID;
-            }
-        } catch { /* cai no prompt */ }
-        if (_boardCancelado) return null;
-        const id = (prompt("Quadro da Shopee não detectado automaticamente.\nCole o ID do quadro Trello (está na URL: trello.com/b/SEU_ID/nome):") || "").trim();
-        if (!id) { _boardCancelado = true; return null; }
-        BOARD_ID = id;
-        localStorage.setItem(CHAVE_BOARD, id);
-        return BOARD_ID;
+            if (candidatos.length === 1) return candidatos[0].shortLink;
+        } catch { /* ignora — cai na configuração manual */ }
+        return null;
+    }
+
+    async function resolverBoardId() {
+        if (BOARD_ID) return BOARD_ID;
+        const salvo = localStorage.getItem(CHAVE_BOARD);
+        if (salvo) { BOARD_ID = salvo; return BOARD_ID; }
+        const auto = await detectarBoardAuto();
+        if (auto) { BOARD_ID = auto; localStorage.setItem(CHAVE_BOARD, auto); return BOARD_ID; }
+        return null; // não resolveu — o painel vai pedir configuração pela ⚙️
     }
 
     // Listas de destino
+    const LISTA_INICIAL         = "INICIAL";
     const LISTA_EXPORTANDO      = "EXPORTANDO";
     const LISTA_EXPORTADO       = "Exportado";
     const LISTA_DESENVOLVIMENTO = "DESENVOLVIMENTO";
@@ -129,6 +133,12 @@
         });
     }
 
+    // Extrai só o nome do cliente do título (último trecho após " - "), p/ comparar por igualdade
+    function nomeClienteDoCard(nomeCard) {
+        const p = (nomeCard || "").split(" - ");
+        return (p.length > 1 ? p[p.length - 1] : (nomeCard || "")).trim().toLowerCase();
+    }
+
     function getKey()   { return localStorage.getItem(CHAVE_CREDS.key); }
     function getToken() { return localStorage.getItem(CHAVE_CREDS.token); }
 
@@ -140,6 +150,74 @@
         localStorage.setItem(CHAVE_CREDS.key, key);
         localStorage.setItem(CHAVE_CREDS.token, token);
         return true;
+    }
+
+    function redefinirCredenciais() {
+        localStorage.removeItem(CHAVE_CREDS.key);
+        localStorage.removeItem(CHAVE_CREDS.token);
+    }
+
+    // Overlay de configuração do quadro (e reset de credenciais) — sem precisar de console
+    function configurarQuadro(aoSalvar) {
+        if (document.getElementById("sp-cfg-overlay")) return;
+        const atual = localStorage.getItem(CHAVE_BOARD) || "";
+        const overlay = document.createElement("div");
+        overlay.id = "sp-cfg-overlay";
+        Object.assign(overlay.style, {
+            position: "fixed", inset: "0", background: "rgba(0,0,0,0.8)",
+            zIndex: "99999999", display: "flex", alignItems: "center", justifyContent: "center"
+        });
+        overlay.innerHTML = `
+        <div style="background:#111;border:1px solid #333;border-radius:12px;padding:24px;
+            width:320px;max-width:90%;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                <span style="color:#ee4d2d;font-weight:bold;letter-spacing:1px">⚙️ CONFIGURAR QUADRO</span>
+                <button id="sp-cfg-x" style="background:none;border:none;color:#888;font-size:16px;cursor:pointer">✕</button>
+            </div>
+            <label style="color:#aaa;font-size:11px">ID do quadro do Trello</label>
+            <input id="sp-cfg-id" value="${atual}" placeholder="cole o ID ou a URL do quadro"
+                style="width:100%;background:#1e1e1e;border:1px solid #444;border-radius:8px;
+                padding:9px;color:#fff;font-family:inherit;font-size:12px;margin:6px 0 4px">
+            <div style="color:#666;font-size:10px;margin-bottom:10px">Está na URL: trello.com/b/<b>ESTE_PEDAÇO</b>/nome</div>
+            <button id="sp-cfg-auto" style="width:100%;background:#1e1e1e;border:1px dashed #555;border-radius:8px;
+                padding:8px;color:#aaa;cursor:pointer;font-family:inherit;font-size:11px;margin-bottom:14px">
+                🔍 Detectar automaticamente
+            </button>
+            <button id="sp-cfg-salvar" style="width:100%;background:#ee4d2d;border:none;border-radius:8px;
+                padding:10px;color:#fff;font-weight:bold;font-family:inherit;font-size:12px;cursor:pointer;margin-bottom:12px">
+                Salvar
+            </button>
+            <button id="sp-cfg-creds" style="width:100%;background:transparent;border:1px solid #444;border-radius:8px;
+                padding:8px;color:#888;cursor:pointer;font-family:inherit;font-size:11px">
+                🔑 Redefinir credenciais do Trello
+            </button>
+        </div>`;
+        document.body.appendChild(overlay);
+        const fechar = () => overlay.remove();
+        document.getElementById("sp-cfg-x").onclick = fechar;
+        overlay.onclick = e => { if (e.target === overlay) fechar(); };
+
+        document.getElementById("sp-cfg-auto").onclick = async () => {
+            const btnA = document.getElementById("sp-cfg-auto");
+            btnA.innerText = "🔍 Detectando...";
+            const auto = await detectarBoardAuto();
+            if (auto) { document.getElementById("sp-cfg-id").value = auto; btnA.innerText = "✅ Encontrado"; }
+            else btnA.innerText = "❌ Não achei — cole manualmente";
+        };
+        document.getElementById("sp-cfg-salvar").onclick = () => {
+            const id = extrairBoardId(document.getElementById("sp-cfg-id").value);
+            if (!id) { alert("❌ Informe o ID do quadro."); return; }
+            localStorage.setItem(CHAVE_BOARD, id);
+            BOARD_ID = id;
+            fechar();
+            if (aoSalvar) aoSalvar();
+        };
+        document.getElementById("sp-cfg-creds").onclick = () => {
+            if (!confirm("Redefinir as credenciais do Trello (key/token)?")) return;
+            redefinirCredenciais();
+            fechar();
+            location.reload();
+        };
     }
 
     // fetch nativo primeiro (não depende do Tampermonkey); GM de reserva p/ CSP restritiva
@@ -321,7 +399,6 @@
         document.getElementById(PAINEL_ID)?.remove();
 
         if (!garantirCredenciais()) return;
-        if (!(await resolverBoardId())) return;
 
         const painel = document.createElement("div");
         painel.id = PAINEL_ID;
@@ -340,7 +417,10 @@
             <div id="sp-drag" style="display:flex;justify-content:space-between;align-items:center;
                 margin-bottom:12px;cursor:grab;padding-bottom:8px;border-bottom:1px solid #222">
                 <span style="color:#ee4d2d;font-weight:bold;font-size:13px;letter-spacing:1px">🔧 SHOPEE</span>
-                <button id="sp-fechar" style="background:none;border:none;color:#888;cursor:pointer;font-size:16px;padding:0;line-height:1">✕</button>
+                <div style="display:flex;gap:8px;align-items:center">
+                    <button id="sp-config" title="Configurar quadro / credenciais" style="background:none;border:none;color:#888;cursor:pointer;font-size:14px;padding:0;line-height:1">⚙️</button>
+                    <button id="sp-fechar" style="background:none;border:none;color:#888;cursor:pointer;font-size:16px;padding:0;line-height:1">✕</button>
+                </div>
             </div>
             <div id="sp-status" style="color:#ccc;font-size:11px;margin-bottom:12px">🔍 Buscando card...</div>
             <div id="sp-mais-compras" style="display:none;margin-bottom:10px"></div>
@@ -348,12 +428,14 @@
         `;
         document.body.appendChild(painel);
         document.getElementById("sp-fechar").onclick = () => { painel.remove(); _ultimoNome = null; };
+        document.getElementById("sp-config").onclick = () =>
+            configurarQuadro(() => { _ultimoNome = null; painel.remove(); criarPainel(); });
 
         // Drag
         const drag = document.getElementById("sp-drag");
         let dragging = false, sx, sy, sl, st;
         drag.addEventListener("mousedown", e => {
-            if (e.target.id === "sp-fechar") return;
+            if (e.target.id === "sp-fechar" || e.target.id === "sp-config") return;
             dragging = true; sx = e.clientX; sy = e.clientY;
             sl = parseInt(painel.style.left) || 0; st = parseInt(painel.style.top) || 0;
             drag.style.cursor = "grabbing"; e.preventDefault();
@@ -370,6 +452,15 @@
                 top: parseInt(painel.style.top), left: parseInt(painel.style.left)
             }));
         });
+
+        // Resolve o quadro; se não der, avisa e abre a config (⚙️) — nunca buga calado
+        if (!(await resolverBoardId())) {
+            document.getElementById("sp-status").innerHTML =
+                `<span style="color:#ee4d2d">⚠️ Quadro não configurado.</span><br>` +
+                `<span style="color:#888">Clique na ⚙️ para informar o quadro do Trello.</span>`;
+            configurarQuadro(() => { _ultimoNome = null; painel.remove(); criarPainel(); });
+            return;
+        }
 
         // Buscar dados
         let card, allCards, listas, etiquetas;
@@ -400,6 +491,7 @@
 
         const modoComprou    = norm(listaAtualNome).startsWith("COMPROU");        // v1.4
         const modoCancelando = norm(listaAtualNome).startsWith("CANCELANDO");     // v1.4
+        const modoReclamacoes = norm(listaAtualNome) === norm(LISTA_RECLAMACOES); // v1.9
         const modoInicial    = listaEm(listaAtualNome, LISTAS_INICIAL);
         const modoDesenv     = listaEm(listaAtualNome, LISTAS_DESENVOLVIMENTO);
         const modoAlteracao  = listaEm(listaAtualNome, LISTAS_ALTERACAO);
@@ -409,6 +501,7 @@
         const modoConferindo = listaEm(listaAtualNome, LISTAS_CONFERINDO);
         const modoFinalizado = listaEm(listaAtualNome, LISTAS_FINALIZADO);
 
+        const listaInicial_       = encontrarLista(listas, LISTA_INICIAL);        // v1.9
         const listaExportando_    = encontrarLista(listas, LISTA_EXPORTANDO);
         const listaExportado_     = encontrarLista(listas, LISTA_EXPORTADO);
         const listaDesenv_        = encontrarLista(listas, LISTA_DESENVOLVIMENTO);
@@ -427,11 +520,11 @@
         const etqMaisCompras = etiquetas.find(e => (e.name || "").toLowerCase().includes(ETIQUETA_MAIS_COMPRAS));
         const cardTemSemLogo = etqSemLogo && (card.idLabels || []).includes(etqSemLogo.id);
 
-        // Detectar mais compras
-        const nomeCliente = card.name.toLowerCase().trim();
+        // Detectar mais compras — v1.9: compara o NOME DO CLIENTE por igualdade
+        // (antes "contém" casava clientes diferentes com nome parecido)
+        const nomeCliente = nomeClienteDoCard(card.name);
         const outrosCards = allCards.filter(c =>
-            c.id !== card.id && c.name.toLowerCase().includes(nomeCliente.split(' - ').pop()?.trim() || nomeCliente)
-            && nomeCliente.length >= 4
+            c.id !== card.id && nomeCliente.length >= 4 && nomeClienteDoCard(c.name) === nomeCliente
         );
 
         if (outrosCards.length > 0) {
@@ -529,12 +622,25 @@
         if (modoComprou) {
             if (listaDesenv_)  acoesEl.appendChild(btn("📋 Desenvolvimento", "#6a1b9a", () => mover(listaDesenv_.id, LISTA_DESENVOLVIMENTO)));
             if (listaAcoes_)   acoesEl.appendChild(btn("♻️ Ações", "#00695c",           () => mover(listaAcoes_.id, LISTA_ACOES)));
+            if (listaInicial_) acoesEl.appendChild(btn("🟢 Inicial", "#33691e",         () => mover(listaInicial_.id, LISTA_INICIAL)));  // v1.9
         }
 
         // ── INICIAL ──
         else if (modoInicial) {
             if (listaDesenv_)  acoesEl.appendChild(btn("📋 Desenvolvimento", "#6a1b9a", () => mover(listaDesenv_.id, LISTA_DESENVOLVIMENTO)));
             if (listaAcoes_)   acoesEl.appendChild(btn("♻️ Ações", "#00695c",           () => mover(listaAcoes_.id, LISTA_ACOES)));
+        }
+
+        // ── CANCELANDO ── (v1.9) — volta pro fluxo: Ações ou Inicial
+        else if (modoCancelando) {
+            if (listaAcoes_)   acoesEl.appendChild(btn("♻️ Ações", "#00695c",           () => mover(listaAcoes_.id, LISTA_ACOES)));
+            if (listaInicial_) acoesEl.appendChild(btn("🟢 Inicial", "#33691e",         () => mover(listaInicial_.id, LISTA_INICIAL)));
+        }
+
+        // ── PROBLEMAS/RECLAMAÇÕES ── (v1.9) — volta pro fluxo: Ações ou Inicial
+        else if (modoReclamacoes) {
+            if (listaAcoes_)   acoesEl.appendChild(btn("♻️ Ações", "#00695c",           () => mover(listaAcoes_.id, LISTA_ACOES)));
+            if (listaInicial_) acoesEl.appendChild(btn("🟢 Inicial", "#33691e",         () => mover(listaInicial_.id, LISTA_INICIAL)));
         }
 
         // ── DESENVOLVIMENTO ──
@@ -633,19 +739,24 @@
         }
 
         // ── MAIS COMPRAS — sempre ──
+        // v1.9: usa o mesmo critério de nome exato do badge (outrosCards) e, como
+        // cliente com mais compras costuma ser revenda/franquia, também marca "sem logo".
         if (etqMaisCompras) {
             acoesEl.appendChild(btn("🔎 Rastrear mais compras", "#7b1fa2", async () => {
                 try {
-                    const nomeNorm = card.name.toLowerCase().split(' - ').pop()?.trim() || card.name.toLowerCase().trim();
-                    if (nomeNorm.length < 4) { toast("⚠️ Nome muito curto", "info"); return; }
-                    const iguais = allCards.filter(c => c.id !== card.id && c.name.toLowerCase().includes(nomeNorm));
-                    if (iguais.length === 0) { toast("✅ Nenhum outro card", "info"); return; }
-                    const todos = [card, ...iguais];
-                    await Promise.all(todos.map(c => {
+                    if (nomeCliente.length < 4) { toast("⚠️ Nome muito curto", "info"); return; }
+                    if (outrosCards.length === 0) { toast("✅ Nenhum outro card do mesmo cliente", "info"); return; }
+                    const todos = [card, ...outrosCards];
+                    await Promise.all(todos.flatMap(c => {
+                        const tarefas = [];
                         if (!(c.idLabels || []).includes(etqMaisCompras.id))
-                            return adicionarEtiqueta(c.id, etqMaisCompras.id);
+                            tarefas.push(adicionarEtiqueta(c.id, etqMaisCompras.id));
+                        if (etqSemLogo && !(c.idLabels || []).includes(etqSemLogo.id))
+                            tarefas.push(adicionarEtiqueta(c.id, etqSemLogo.id));
+                        return tarefas;
                     }));
-                    toast(`🏷️ Etiqueta em ${todos.length} card(s)`);
+                    statusEl.innerHTML = `<span style="color:#ce93d8">🏷️ Mais compras + sem logo: ${todos.length} card(s)</span>`;
+                    toast(`🏷️ ${todos.length} card(s) marcados (mais compras + sem logo)`);
                 } catch { toast("❌ Erro ao rastrear", "erro"); }
             }));
         }
