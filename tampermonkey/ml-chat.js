@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ML — Painel de Atendimento
 // @namespace    empresa-ml-chat
-// @version      4.0
+// @version      4.1
 // @description  Painel de ações no chat do cliente ML
 // @match        https://*.mercadolivre.com.br/vendas/*/mensagens*
 // @match        https://*.mercadolibre.com.br/vendas/*/mensagens*
@@ -585,9 +585,14 @@
         }
 
         // ── PROBLEMAS/RECLAMAÇÕES ── (v3.9) — volta pro fluxo: Ações ou Inicial
+        // v4.1: também volta direto pra Desenvolvimento, Alterações ou Exportando,
+        // porque o problema pode ter sido resolvido em qualquer etapa do fluxo.
         else if (modoReclamacoes) {
             if (listaAcoes_)   acoesEl.appendChild(btn("♻️ Ações", "#00695c",           () => mover(listaAcoes_.id, LISTA_ACOES)));
             if (listaInicial_) acoesEl.appendChild(btn("🟢 Inicial", "#33691e",         () => mover(listaInicial_.id, LISTA_INICIAL)));
+            if (listaDesenv_)  acoesEl.appendChild(btn("📋 Desenvolvimento", "#6a1b9a", () => mover(listaDesenv_.id, LISTA_DESENVOLVIMENTO)));  // v4.1
+            if (listasAlt.length > 0) acoesEl.appendChild(selectAlteracao(false));                                                              // v4.1
+            if (listaExportando_) acoesEl.appendChild(btn("🖨️ Exportando", "#7b1fa2",  () => mover(listaExportando_.id, LISTA_EXPORTANDO)));   // v4.1
         }
 
         // ── DESENVOLVIMENTO ──

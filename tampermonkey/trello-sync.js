@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Vendas → Trello (ML + Shopee)
 // @namespace    vendas-trello
-// @version      1.7
-// @match        https://www.mercadolivre.com.br/vendas/omni/*
-// @match        https://www.mercadolibre.com.br/vendas/omni/*
+// @version      1.8
+// @match        https://*.mercadolivre.com.br/vendas/omni/*
+// @match        https://*.mercadolibre.com.br/vendas/omni/*
 // @match        https://seller.shopee.com.br/portal/sale/*
 // @grant        GM_setValue
 // @grant        GM_getValue

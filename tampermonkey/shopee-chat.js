@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shopee — Painel de Atendimento
 // @namespace    empresa-shopee-chat
-// @version      1.9
+// @version      2.0
 // @description  Painel de ações no chat da Shopee
 // @match        https://seller.shopee.com.br/new-webchat/*
 // @grant        GM_xmlhttpRequest
@@ -492,6 +492,9 @@
         const modoComprou    = norm(listaAtualNome).startsWith("COMPROU");        // v1.4
         const modoCancelando = norm(listaAtualNome).startsWith("CANCELANDO");     // v1.4
         const modoReclamacoes = norm(listaAtualNome) === norm(LISTA_RECLAMACOES); // v1.9
+        // v2.0: no quadro da Shopee é FALTA INFORMAÇÕES que faz o papel de
+        // PROBLEMAS/RECLAMAÇÕES — mesmas ações de volta pro fluxo.
+        const modoFaltaInfo  = norm(listaAtualNome) === norm(LISTA_FALTA_INFO);
         const modoInicial    = listaEm(listaAtualNome, LISTAS_INICIAL);
         const modoDesenv     = listaEm(listaAtualNome, LISTAS_DESENVOLVIMENTO);
         const modoAlteracao  = listaEm(listaAtualNome, LISTAS_ALTERACAO);
@@ -625,6 +628,18 @@
             if (listaInicial_) acoesEl.appendChild(btn("🟢 Inicial", "#33691e",         () => mover(listaInicial_.id, LISTA_INICIAL)));  // v1.9
         }
 
+        // ── PROBLEMAS/RECLAMAÇÕES e FALTA INFORMAÇÕES ── (v1.9) — volta pro fluxo
+        // Vem antes da INICIAL porque FALTA INFORMAÇÕES também está em LISTAS_INICIAL.
+        // v2.0: além de Ações/Inicial, volta direto pra Desenvolvimento, Alterações
+        // ou Exportando — o problema pode ter sido resolvido em qualquer etapa.
+        else if (modoReclamacoes || modoFaltaInfo) {
+            if (listaAcoes_)   acoesEl.appendChild(btn("♻️ Ações", "#00695c",           () => mover(listaAcoes_.id, LISTA_ACOES)));
+            if (listaInicial_) acoesEl.appendChild(btn("🟢 Inicial", "#33691e",         () => mover(listaInicial_.id, LISTA_INICIAL)));
+            if (listaDesenv_)  acoesEl.appendChild(btn("📋 Desenvolvimento", "#6a1b9a", () => mover(listaDesenv_.id, LISTA_DESENVOLVIMENTO)));  // v2.0
+            if (listasAlt.length > 0) acoesEl.appendChild(selectAlteracao(false));                                                              // v2.0
+            if (listaExportando_) acoesEl.appendChild(btn("🖨️ Exportando", "#7b1fa2",  () => mover(listaExportando_.id, LISTA_EXPORTANDO)));   // v2.0
+        }
+
         // ── INICIAL ──
         else if (modoInicial) {
             if (listaDesenv_)  acoesEl.appendChild(btn("📋 Desenvolvimento", "#6a1b9a", () => mover(listaDesenv_.id, LISTA_DESENVOLVIMENTO)));
@@ -633,12 +648,6 @@
 
         // ── CANCELANDO ── (v1.9) — volta pro fluxo: Ações ou Inicial
         else if (modoCancelando) {
-            if (listaAcoes_)   acoesEl.appendChild(btn("♻️ Ações", "#00695c",           () => mover(listaAcoes_.id, LISTA_ACOES)));
-            if (listaInicial_) acoesEl.appendChild(btn("🟢 Inicial", "#33691e",         () => mover(listaInicial_.id, LISTA_INICIAL)));
-        }
-
-        // ── PROBLEMAS/RECLAMAÇÕES ── (v1.9) — volta pro fluxo: Ações ou Inicial
-        else if (modoReclamacoes) {
             if (listaAcoes_)   acoesEl.appendChild(btn("♻️ Ações", "#00695c",           () => mover(listaAcoes_.id, LISTA_ACOES)));
             if (listaInicial_) acoesEl.appendChild(btn("🟢 Inicial", "#33691e",         () => mover(listaInicial_.id, LISTA_INICIAL)));
         }
