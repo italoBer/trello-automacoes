@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vendas → Trello (ML + Shopee)
 // @namespace    vendas-trello
-// @version      1.8
+// @version      1.9
 // @match        https://*.mercadolivre.com.br/vendas/omni/*
 // @match        https://*.mercadolibre.com.br/vendas/omni/*
 // @match        https://seller.shopee.com.br/portal/sale/*
@@ -373,7 +373,9 @@
       if (!isPersonalizado && !isReclamacao) return;
 
       const nome    = card.querySelector('.buyer-name')?.innerText.trim();
-      let   link    = card.querySelector('.right-column__messenger a')?.getAttribute('href');
+      // v1.9: usa a propriedade .href (sempre absoluta) em vez de getAttribute —
+      // se o ML emitir href relativo, o link ia pro card quebrado.
+      let   link    = card.querySelector('.right-column__messenger a')?.href;
       if (link) link = link.replace(/&amp;/g, '&');
       const data    = card.querySelector('.left-column__order-date')?.innerText.trim() || '';
       const orderId = card.querySelector('.left-column__pack-id')?.innerText.trim() || '';
@@ -394,7 +396,12 @@
         `**TOTAL:** ${totalQtd}`,
       ].filter(l => l !== '').join('\n');
 
-      mapa.set(link, { nome, link, data, orderId, dueDate, itens, totalQtd, isPacote, temKit, isReclamacao, desc, _chave: link });
+      // v1.9: dedup pelo ID da venda, não pela URL inteira. O ML trocou o domínio
+      // (www → vendedores), então comparar URL faria todo card antigo parecer novo
+      // e duplicaria o quadro. O ID já é capturado dos cards antigos pelo regex de
+      // IDs em getDadosExistentes(), então funciona com os dois formatos de link.
+      const vendaId = link.match(/mensagens\/(\d+)/)?.[1];
+      mapa.set(link, { nome, link, data, orderId, dueDate, itens, totalQtd, isPacote, temKit, isReclamacao, desc, _chave: vendaId || link });
     });
     return [...mapa.values()];
   }
