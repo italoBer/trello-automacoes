@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ML — Painel de Atendimento
 // @namespace    empresa-ml-chat
-// @version      4.1
+// @version      4.2
 // @description  Painel de ações no chat do cliente ML
 // @match        https://*.mercadolivre.com.br/vendas/*/mensagens*
 // @match        https://*.mercadolibre.com.br/vendas/*/mensagens*
@@ -592,7 +592,15 @@
             if (listaInicial_) acoesEl.appendChild(btn("🟢 Inicial", "#33691e",         () => mover(listaInicial_.id, LISTA_INICIAL)));
             if (listaDesenv_)  acoesEl.appendChild(btn("📋 Desenvolvimento", "#6a1b9a", () => mover(listaDesenv_.id, LISTA_DESENVOLVIMENTO)));  // v4.1
             if (listasAlt.length > 0) acoesEl.appendChild(selectAlteracao(false));                                                              // v4.1
-            if (listaExportando_) acoesEl.appendChild(btn("🖨️ Exportando", "#7b1fa2",  () => mover(listaExportando_.id, LISTA_EXPORTANDO)));   // v4.1
+            // v4.2: quem sai da reclamação pra Exportando passa pela aprovação —
+            // mesmos dois botões da lista AGUARDANDO APROVAÇÃO.
+            if (listaExportando_) {
+                acoesEl.appendChild(btn("✅ Aprovado", "#2e7d32", () => mover(listaExportando_.id, LISTA_EXPORTANDO)));
+                acoesEl.appendChild(btn("✅ Aprovado sem logo", "#1565c0", async () => {
+                    await mover(listaExportando_.id, LISTA_EXPORTANDO);
+                    if (etqSemLogo) await adicionarEtiqueta(card.id, etqSemLogo.id);
+                }));
+            }
         }
 
         // ── DESENVOLVIMENTO ──

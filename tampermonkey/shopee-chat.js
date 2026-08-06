@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shopee — Painel de Atendimento
 // @namespace    empresa-shopee-chat
-// @version      2.0
+// @version      2.1
 // @description  Painel de ações no chat da Shopee
 // @match        https://seller.shopee.com.br/new-webchat/*
 // @grant        GM_xmlhttpRequest
@@ -637,7 +637,15 @@
             if (listaInicial_) acoesEl.appendChild(btn("🟢 Inicial", "#33691e",         () => mover(listaInicial_.id, LISTA_INICIAL)));
             if (listaDesenv_)  acoesEl.appendChild(btn("📋 Desenvolvimento", "#6a1b9a", () => mover(listaDesenv_.id, LISTA_DESENVOLVIMENTO)));  // v2.0
             if (listasAlt.length > 0) acoesEl.appendChild(selectAlteracao(false));                                                              // v2.0
-            if (listaExportando_) acoesEl.appendChild(btn("🖨️ Exportando", "#7b1fa2",  () => mover(listaExportando_.id, LISTA_EXPORTANDO)));   // v2.0
+            // v2.1: quem sai da reclamação pra Exportando passa pela aprovação —
+            // mesmos dois botões da lista AGUARDANDO APROVAÇÃO.
+            if (listaExportando_) {
+                acoesEl.appendChild(btn("✅ Aprovado", "#2e7d32", () => mover(listaExportando_.id, LISTA_EXPORTANDO)));
+                acoesEl.appendChild(btn("✅ Aprovado sem logo", "#1565c0", async () => {
+                    await mover(listaExportando_.id, LISTA_EXPORTANDO);
+                    if (etqSemLogo) await adicionarEtiqueta(card.id, etqSemLogo.id);
+                }));
+            }
         }
 
         // ── INICIAL ──
