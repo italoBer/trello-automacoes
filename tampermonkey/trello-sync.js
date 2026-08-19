@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vendas → Trello (ML + Shopee)
 // @namespace    vendas-trello
-// @version      2.0
+// @version      2.1
 // @match        https://*.mercadolivre.com.br/vendas/omni/*
 // @match        https://*.mercadolibre.com.br/vendas/omni/*
 // @match        https://seller.shopee.com.br/portal/sale/*
@@ -69,9 +69,9 @@
       { key: 'API_TOKEN',       label: 'Trello Token',               placeholder: '64 caracteres',  hint: 'Gerado na mesma página da API Key' },
       { key: 'BOARD_ID_ML',     label: 'Board ID — Mercado Livre',   placeholder: 'ex: aBcD1234',   hint: 'URL do quadro: trello.com/b/SEU_ID/nome' },
       { key: 'BOARD_ID_SHOPEE', label: 'Board ID — Shopee',          placeholder: 'ex: eFgH5678',   hint: 'URL do quadro: trello.com/b/SEU_ID/nome' },
-      { key: 'LABEL_RECLAM',    label: 'ID Etiqueta Reclamação (ML)', placeholder: 'ID hexadecimal', hint: 'Opcional. Cole o ID, não o nome' },
-      { key: 'LABEL_MAIS',      label: 'ID Etiqueta Mais Compras',   placeholder: 'ID hexadecimal', hint: 'Opcional. Cole o ID, não o nome' },
-      { key: 'LABEL_SEM_LOGO',  label: 'ID Etiqueta Sem Logo',       placeholder: 'ID hexadecimal', hint: 'Opcional. Vai junto com "mais compras" (revendedor)' },
+      { key: 'LABEL_RECLAM',    label: 'ID Etiqueta Reclamação (ML)', placeholder: 'detectada pelo nome', hint: 'Deixe vazio: acha sozinho a etiqueta "Reclamação"' },
+      { key: 'LABEL_MAIS',      label: 'ID Etiqueta Mais Compras',   placeholder: 'detectada pelo nome', hint: 'Deixe vazio: acha sozinho a etiqueta "mais compras"' },
+      { key: 'LABEL_SEM_LOGO',  label: 'ID Etiqueta Sem Logo',       placeholder: 'detectada pelo nome', hint: 'Deixe vazio: acha sozinho a etiqueta "sem logo"' },
     ];
 
     const inputs = {};
@@ -121,6 +121,7 @@
         return;
       }
       Object.keys(inputs).forEach(key => GM_setValue(key, inputs[key].value.trim()));
+      _etqCache = null; // config mudou: refaz a resolução das etiquetas
       overlay.remove();
       if (aoSalvar) aoSalvar();
     });
@@ -260,6 +261,35 @@
     });
   }
 
+  // ─── Etiquetas ────────────────────────────────────────────────
+  // Nomes como aparecem no quadro. Mesma convenção dos painéis de chat, que
+  // nunca precisaram de ID configurado — acham a etiqueta pelo nome.
+  const ETQ_NOMES = {
+    mais:    'mais compras',
+    semLogo: 'sem logo',
+    reclam:  'reclama',      // pega "Reclamação" e "Reclamacao"
+  };
+
+  function normTxt(s) {
+    return (s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').trim().toLowerCase();
+  }
+
+  // Puro: decide qual ID usar pra cada etiqueta.
+  // ID colado no ⚙️ vence (override); senão procura pelo NOME no quadro.
+  // Assim o setup manual vira opcional em vez de obrigatório.
+  function escolherEtiquetas(manual, doQuadro) {
+    const acharPorNome = alvo => {
+      const a = normTxt(alvo);
+      const achada = (doQuadro || []).find(l => normTxt(l.name).includes(a));
+      return achada ? achada.id : '';
+    };
+    return {
+      mais:    manual.mais    || acharPorNome(ETQ_NOMES.mais),
+      semLogo: manual.semLogo || acharPorNome(ETQ_NOMES.semLogo),
+      reclam:  manual.reclam  || acharPorNome(ETQ_NOMES.reclam),
+    };
+  }
+
   // Quais cards ANTIGOS precisam ganhar etiqueta, e quais. Só devolve o que está
   // faltando — card que já tem as duas não entra, pra não gastar requisição.
   // Também puro; a parte de rede é a etiquetarAnteriores() logo abaixo.
@@ -314,6 +344,26 @@
     return { existentes, cardsPorCliente };
   }
 
+  // Resolve as etiquetas do quadro uma vez por execução (rede + escolherEtiquetas).
+  let _etqCache = null;
+  async function resolverEtiquetas() {
+    if (_etqCache) return _etqCache;
+    const { API_KEY, API_TOKEN, LABEL_RECLAM, LABEL_MAIS, LABEL_SEM_LOGO } = getCreds();
+    let doQuadro = [];
+    try {
+      const res = await fetch(
+        `https://api.trello.com/1/boards/${cfg.BOARD_ID}/labels?fields=name&key=${API_KEY}&token=${API_TOKEN}`
+      );
+      if (res.ok) doQuadro = await res.json();
+    } catch { /* sem rede: cai nos IDs manuais, se houver */ }
+
+    _etqCache = escolherEtiquetas(
+      { mais: LABEL_MAIS, semLogo: LABEL_SEM_LOGO, reclam: LABEL_RECLAM },
+      doQuadro
+    );
+    return _etqCache;
+  }
+
   async function getListas() {
     const { API_KEY, API_TOKEN } = getCreds();
     const res = await fetch(
@@ -324,13 +374,14 @@
   }
 
   async function criarCard(p, listId) {
-    const { API_KEY, API_TOKEN, LABEL_RECLAM, LABEL_MAIS, LABEL_SEM_LOGO } = getCreds();
+    const { API_KEY, API_TOKEN } = getCreds();
+    const etq = await resolverEtiquetas();
     const labels = [];
-    if (p.isReclamacao && PLATAFORMA === 'ml' && LABEL_RECLAM) labels.push(LABEL_RECLAM);
+    if (p.isReclamacao && PLATAFORMA === 'ml' && etq.reclam) labels.push(etq.reclam);
     // Mais compras costuma ser revenda/franquia — vai junto com "sem logo",
     // mesmo par que o botão 🔎 Rastrear do painel de chat aplica.
-    if (p.maisCompras && LABEL_MAIS)     labels.push(LABEL_MAIS);
-    if (p.maisCompras && LABEL_SEM_LOGO) labels.push(LABEL_SEM_LOGO);
+    if (p.maisCompras && etq.mais)    labels.push(etq.mais);
+    if (p.maisCompras && etq.semLogo) labels.push(etq.semLogo);
 
     const body = { name: p.nome, desc: p.desc, idList: listId };
     if (p.dueDate)     body.due      = p.dueDate;
@@ -347,8 +398,9 @@
   // Antes só o pedido novo era marcado, então o quadro ficava com um card do
   // par etiquetado e o outro não. Devolve quantos cards foram atualizados.
   async function etiquetarAnteriores(novos) {
-    const { API_KEY, API_TOKEN, LABEL_MAIS, LABEL_SEM_LOGO } = getCreds();
-    const alvos = alvosRetroativos(novos, LABEL_MAIS, LABEL_SEM_LOGO);
+    const { API_KEY, API_TOKEN } = getCreds();
+    const etq = await resolverEtiquetas();
+    const alvos = alvosRetroativos(novos, etq.mais, etq.semLogo);
 
     let atualizados = 0;
     for (const [cardId, labels] of alvos) {
