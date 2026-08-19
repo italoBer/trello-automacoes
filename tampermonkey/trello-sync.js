@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vendas → Trello (ML + Shopee)
 // @namespace    vendas-trello
-// @version      2.1
+// @version      2.2
 // @match        https://*.mercadolivre.com.br/vendas/omni/*
 // @match        https://*.mercadolibre.com.br/vendas/omni/*
 // @match        https://seller.shopee.com.br/portal/sale/*
@@ -308,16 +308,51 @@
     return alvos;
   }
 
+  // Variantes da busca de cards, da mais completa pra mais básica:
+  //   1ª — filter=all traz arquivados (cliente com pedido antigo arquivado não
+  //        volta a parecer novo) e idLabels permite etiquetar retroativo;
+  //   2ª — sem filter, caso o quadro/API recuse esse parâmetro;
+  //   3ª — a forma antiga, que sempre funcionou.
+  // A v2.1 mandava só a 1ª e, quando o Trello recusava, a sincronização inteira
+  // morria com "Erro ao consultar o Trello". Agora degrada em vez de travar.
+  const VARIANTES_CARDS = [
+    'filter=all&fields=name,desc,idLabels',
+    'fields=name,desc,idLabels',
+    'fields=name,desc',
+  ];
+
+  let _varianteOk = null; // a que funcionou: tenta ela primeiro nas próximas
+
+  async function buscarCardsComFallback(base, fetchFn) {
+    const ordem = _varianteOk
+      ? [_varianteOk, ...VARIANTES_CARDS.filter(v => v !== _varianteOk)]
+      : VARIANTES_CARDS.slice();
+
+    const erros = [];
+    for (const q of ordem) {
+      try {
+        const res = await fetchFn(`${base}?${q}`);
+        if (!res.ok) { erros.push(`${q} → HTTP ${res.status}`); continue; }
+        const dados = await res.json();
+        if (!Array.isArray(dados)) { erros.push(`${q} → resposta não é lista`); continue; }
+        _varianteOk = q;
+        return { cards: dados, variante: q, erros };
+      } catch (e) {
+        erros.push(`${q} → ${e.message}`);
+      }
+    }
+    throw new Error(`Trello recusou a busca de cards:\n${erros.join('\n')}`);
+  }
+
   // ─── Trello API ───────────────────────────────────────────────
   async function getTrelloCards() {
     const { API_KEY, API_TOKEN } = getCreds();
-    // filter=all inclui arquivados. Sem isso, cliente cujo pedido antigo já foi
-    // arquivado voltava a parecer cliente novo (e o pedido antigo podia até ser
-    // recriado como duplicado). idLabels é o que permite etiquetar retroativo.
-    const res = await fetch(
-      `https://api.trello.com/1/boards/${cfg.BOARD_ID}/cards?filter=all&fields=name,desc,idLabels&key=${API_KEY}&token=${API_TOKEN}`
+    const { cards, variante, erros } = await buscarCardsComFallback(
+      `https://api.trello.com/1/boards/${cfg.BOARD_ID}/cards`,
+      url => fetch(`${url}&key=${API_KEY}&token=${API_TOKEN}`)
     );
-    return res.json();
+    if (erros.length) console.warn('[VT] variantes recusadas:', erros, '→ usando:', variante);
+    return cards;
   }
 
   // Retorna: { existentes: Set<chave>, cardsPorCliente: Map<nomeNorm, [{id, idLabels}]> }
@@ -369,6 +404,7 @@
     const res = await fetch(
       `https://api.trello.com/1/boards/${cfg.BOARD_ID}/lists?key=${API_KEY}&token=${API_TOKEN}`
     );
+    if (!res.ok) throw new Error(`listas: HTTP ${res.status} (confira Board ID / chave / token)`);
     const todas = await res.json();
     return todas.filter(cfg.FILTRO_LISTAS);
   }
@@ -735,7 +771,9 @@
         if (!novos.length) { showMsg('✔ Tudo já está no Trello!', 'Todos os pedidos já têm card criado.', '#34d399'); return; }
         showPreview(novos, jaExistem, listas);
       })
-      .catch(e => { console.error(e); rm(); alert('Erro ao consultar o Trello.'); });
+      // Mostra o motivo real — antes era só "Erro ao consultar o Trello" e não
+      // dava pra saber se era credencial, board errado ou parâmetro recusado.
+      .catch(e => { console.error(e); rm(); alert(`Erro ao consultar o Trello.\n\n${e && e.message ? e.message : e}`); });
   }
 
   // ─── Botão ────────────────────────────────────────────────────
