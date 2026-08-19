@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vendas → Trello (ML + Shopee)
 // @namespace    vendas-trello
-// @version      1.9
+// @version      2.0
 // @match        https://*.mercadolivre.com.br/vendas/omni/*
 // @match        https://*.mercadolibre.com.br/vendas/omni/*
 // @match        https://seller.shopee.com.br/portal/sale/*
@@ -24,6 +24,7 @@
       API_TOKEN:       GM_getValue('API_TOKEN', ''),
       LABEL_RECLAM:    GM_getValue('LABEL_RECLAM', ''),
       LABEL_MAIS:      GM_getValue('LABEL_MAIS', ''),
+      LABEL_SEM_LOGO:  GM_getValue('LABEL_SEM_LOGO', ''),
       BOARD_ID_ML:     GM_getValue('BOARD_ID_ML', ''),
       BOARD_ID_SHOPEE: GM_getValue('BOARD_ID_SHOPEE', ''),
     };
@@ -70,6 +71,7 @@
       { key: 'BOARD_ID_SHOPEE', label: 'Board ID — Shopee',          placeholder: 'ex: eFgH5678',   hint: 'URL do quadro: trello.com/b/SEU_ID/nome' },
       { key: 'LABEL_RECLAM',    label: 'ID Etiqueta Reclamação (ML)', placeholder: 'ID hexadecimal', hint: 'Opcional. Cole o ID, não o nome' },
       { key: 'LABEL_MAIS',      label: 'ID Etiqueta Mais Compras',   placeholder: 'ID hexadecimal', hint: 'Opcional. Cole o ID, não o nome' },
+      { key: 'LABEL_SEM_LOGO',  label: 'ID Etiqueta Sem Logo',       placeholder: 'ID hexadecimal', hint: 'Opcional. Vai junto com "mais compras" (revendedor)' },
     ];
 
     const inputs = {};
@@ -216,33 +218,100 @@
     ui.appendChild(b);
   }
 
+  // ─── Mais compras ─────────────────────────────────────────────
+  // Tamanho mínimo do nome pra valer como cliente — evita que card com nome
+  // curto/lixo ("ana", "-", "x") case com meio mundo. Mesmo critério do chat.
+  const MIN_NOME = 4;
+
+  // Nome do cliente normalizado, para comparar pedido novo × card existente.
+  // 1) A equipe renomeia o card pra "PREFIXO - Nome do Cliente", então corta
+  //    tudo antes do primeiro " - " (mesmo critério do painel de chat).
+  // 2) Tira acento e espaço duplo: "JOSÉ  SILVA" e "jose silva" são o mesmo.
+  function nomeCliente(nome) {
+    const partes = (nome || '').split(' - ');
+    const base = partes.length > 1 ? partes.slice(1).join(' - ') : (nome || '');
+    return base
+      .normalize('NFD').replace(/\p{Diacritic}/gu, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  // Decide quem é "mais compras". Puro de propósito — é o que os testes cobrem.
+  // Marca se o cliente já tem card no quadro OU se o mesmo nome aparece mais de
+  // uma vez na própria leva (revendedor que fez 3 pedidos de uma vez não tinha
+  // card anterior nenhum, e antes disso os 3 saíam sem etiqueta).
+  function marcarMaisCompras(candidatos, cardsPorCliente) {
+    const naLeva = new Map();
+    candidatos.forEach(p => {
+      const n = nomeCliente(p.nome);
+      naLeva.set(n, (naLeva.get(n) || 0) + 1);
+    });
+
+    return candidatos.map(p => {
+      const n = nomeCliente(p.nome);
+      const anteriores = cardsPorCliente.get(n) || [];
+      return {
+        ...p,
+        _cliente: n,
+        _anteriores: anteriores,
+        maisCompras: n.length >= MIN_NOME && (anteriores.length > 0 || naLeva.get(n) > 1),
+      };
+    });
+  }
+
+  // Quais cards ANTIGOS precisam ganhar etiqueta, e quais. Só devolve o que está
+  // faltando — card que já tem as duas não entra, pra não gastar requisição.
+  // Também puro; a parte de rede é a etiquetarAnteriores() logo abaixo.
+  function alvosRetroativos(novos, labelMais, labelSemLogo) {
+    const alvos = new Map(); // cardId -> [labelId]
+    novos.filter(p => p.maisCompras).forEach(p => {
+      (p._anteriores || []).forEach(c => {
+        const faltando = [labelMais, labelSemLogo]
+          .filter(l => l && !(c.idLabels || []).includes(l));
+        if (!faltando.length) return;
+        const atual = alvos.get(c.id) || [];
+        faltando.forEach(l => { if (!atual.includes(l)) atual.push(l); });
+        alvos.set(c.id, atual);
+      });
+    });
+    return alvos;
+  }
+
   // ─── Trello API ───────────────────────────────────────────────
   async function getTrelloCards() {
     const { API_KEY, API_TOKEN } = getCreds();
+    // filter=all inclui arquivados. Sem isso, cliente cujo pedido antigo já foi
+    // arquivado voltava a parecer cliente novo (e o pedido antigo podia até ser
+    // recriado como duplicado). idLabels é o que permite etiquetar retroativo.
     const res = await fetch(
-      `https://api.trello.com/1/boards/${cfg.BOARD_ID}/cards?fields=name,desc&key=${API_KEY}&token=${API_TOKEN}`
+      `https://api.trello.com/1/boards/${cfg.BOARD_ID}/cards?filter=all&fields=name,desc,idLabels&key=${API_KEY}&token=${API_TOKEN}`
     );
     return res.json();
   }
 
-  // Retorna: { existentes: Set<string>, nomesPorCard: Map<nomeNorm, true> }
+  // Retorna: { existentes: Set<chave>, cardsPorCliente: Map<nomeNorm, [{id, idLabels}]> }
   async function getDadosExistentes() {
     const cards = await getTrelloCards();
     const existentes = new Set();
-    const nomesExistentes = new Set();
+    const cardsPorCliente = new Map();
 
     cards.forEach(c => {
       const txt = (c.name || '') + ' ' + (c.desc || '');
       // Links ML
       (txt.match(/https?:\/\/\S+/g) || []).forEach(l => existentes.add(l.trim()));
-      // IDs alfanuméricos Shopee
+      // IDs alfanuméricos Shopee + ID da venda ML (dedup)
       (txt.match(/[A-Z0-9]{10,}/g) || []).forEach(id => existentes.add(id));
-      // Nome normalizado do comprador (para detectar mais compras)
-      const nome = (c.name || '').trim().toLowerCase();
-      if (nome) nomesExistentes.add(nome);
+      // Cliente normalizado — antes isso guardava o nome CRU do card, então
+      // qualquer card renomeado pra "PREFIXO - Nome" nunca mais casava.
+      const nome = nomeCliente(c.name);
+      if (nome.length >= MIN_NOME) {
+        if (!cardsPorCliente.has(nome)) cardsPorCliente.set(nome, []);
+        cardsPorCliente.get(nome).push({ id: c.id, idLabels: c.idLabels || [] });
+      }
     });
 
-    return { existentes, nomesExistentes };
+    return { existentes, cardsPorCliente };
   }
 
   async function getListas() {
@@ -255,10 +324,13 @@
   }
 
   async function criarCard(p, listId) {
-    const { API_KEY, API_TOKEN, LABEL_RECLAM, LABEL_MAIS } = getCreds();
+    const { API_KEY, API_TOKEN, LABEL_RECLAM, LABEL_MAIS, LABEL_SEM_LOGO } = getCreds();
     const labels = [];
     if (p.isReclamacao && PLATAFORMA === 'ml' && LABEL_RECLAM) labels.push(LABEL_RECLAM);
-    if (p.maisCompras && LABEL_MAIS) labels.push(LABEL_MAIS);
+    // Mais compras costuma ser revenda/franquia — vai junto com "sem logo",
+    // mesmo par que o botão 🔎 Rastrear do painel de chat aplica.
+    if (p.maisCompras && LABEL_MAIS)     labels.push(LABEL_MAIS);
+    if (p.maisCompras && LABEL_SEM_LOGO) labels.push(LABEL_SEM_LOGO);
 
     const body = { name: p.nome, desc: p.desc, idList: listId };
     if (p.dueDate)     body.due      = p.dueDate;
@@ -269,6 +341,31 @@
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
     );
     return res.json();
+  }
+
+  // Aplica as etiquetas que faltam nos cards ANTIGOS do mesmo cliente.
+  // Antes só o pedido novo era marcado, então o quadro ficava com um card do
+  // par etiquetado e o outro não. Devolve quantos cards foram atualizados.
+  async function etiquetarAnteriores(novos) {
+    const { API_KEY, API_TOKEN, LABEL_MAIS, LABEL_SEM_LOGO } = getCreds();
+    const alvos = alvosRetroativos(novos, LABEL_MAIS, LABEL_SEM_LOGO);
+
+    let atualizados = 0;
+    for (const [cardId, labels] of alvos) {
+      let algum = false;
+      for (const labelId of labels) {
+        try {
+          const res = await fetch(
+            `https://api.trello.com/1/cards/${cardId}/idLabels?value=${labelId}&key=${API_KEY}&token=${API_TOKEN}`,
+            { method: 'POST' }
+          );
+          if (res.ok) algum = true;
+        } catch { /* etiqueta é acessório: não derruba a criação dos cards */ }
+        await new Promise(r => setTimeout(r, 120));
+      }
+      if (algum) atualizados++;
+    }
+    return atualizados;
   }
 
   // ─── Kits ─────────────────────────────────────────────────────
@@ -527,7 +624,12 @@
         catch { err++; }
         await new Promise(r => setTimeout(r, 250));
       }
-      showFeito(ok, err, jaExistem);
+      let retro = 0;
+      try {
+        showLoading('Etiquetando pedidos anteriores...');
+        retro = await etiquetarAnteriores(novos);
+      } catch { /* já criou os cards; etiqueta retroativa é o extra */ }
+      showFeito(ok, err, jaExistem, retro);
     });
     ui.appendChild(bEnviar);
 
@@ -536,12 +638,13 @@
     ui.appendChild(bFechar);
   }
 
-  function showFeito(ok, err, ignorados) {
+  function showFeito(ok, err, ignorados, retro = 0) {
     const ui = criarUI();
     ui.appendChild(el('div', { color: cfg.ACCENT, fontWeight: 'bold', marginBottom: '12px' }, cfg.LABEL));
     const box = el('div', { padding: '14px', background: '#1a1a1a', borderRadius: '7px', textAlign: 'center', marginBottom: '14px' });
     box.appendChild(el('div', { color: '#34d399', fontSize: '15px', marginBottom: '6px' }, `✔ ${ok} card(s) criado(s)`));
     if (ignorados > 0) box.appendChild(el('div', { color: '#888', fontSize: '12px', marginBottom: '4px' }, `⏭ ${ignorados} já existiam`));
+    if (retro > 0) box.appendChild(el('div', { color: '#7ab8ff', fontSize: '12px', marginBottom: '4px' }, `🔁 ${retro} card(s) antigo(s) etiquetado(s)`));
     if (err) box.appendChild(el('div', { color: '#f87171' }, `✘ ${err} erro(s)`));
     ui.appendChild(box);
     const b = mkBtn('Fechar', { background: 'transparent', border: '1px solid #2a2a2a', color: '#555' });
@@ -570,14 +673,11 @@
 
     showLoading('Verificando duplicados no Trello...');
     Promise.all([getDadosExistentes(), getListas()])
-      .then(([{ existentes, nomesExistentes }, listas]) => {
-        const novos = pedidos
-          .filter(p => !existentes.has(p._chave))
-          .map(p => ({
-            ...p,
-            // Marca "mais compras" se o nome do comprador já existe em outro card
-            maisCompras: nomesExistentes.has(p.nome.trim().toLowerCase()),
-          }));
+      .then(([{ existentes, cardsPorCliente }, listas]) => {
+        const novos = marcarMaisCompras(
+          pedidos.filter(p => !existentes.has(p._chave)),
+          cardsPorCliente
+        );
 
         const jaExistem = pedidos.length - novos.length;
         if (!novos.length) { showMsg('✔ Tudo já está no Trello!', 'Todos os pedidos já têm card criado.', '#34d399'); return; }
