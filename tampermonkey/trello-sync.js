@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vendas → Trello (ML + Shopee)
 // @namespace    vendas-trello
-// @version      3.0
+// @version      3.1
 // @match        https://*.mercadolivre.com.br/vendas/omni/*
 // @match        https://*.mercadolibre.com.br/vendas/omni/*
 // @match        https://seller.shopee.com.br/portal/sale/*
@@ -373,11 +373,17 @@
     const ui = document.createElement('div');
     ui.id = UI_ID;
     Object.assign(ui.style, {
-      position: 'fixed', bottom: '70px', left: '20px', zIndex: '99999',
+      position: 'fixed', left: '20px', zIndex: '999991',
       background: '#111', border: '1px solid #2a2a2a', borderRadius: '14px',
       padding: '20px 24px', width: '360px', fontFamily: 'monospace', fontSize: '13px',
       boxShadow: '0 8px 40px rgba(0,0,0,.8)', color: '#f0f0f0',
     });
+    // v3.0: em vez de um bottom fixo (que cobria o indicador quando ele
+    // aparecia), mede a altura real da coluna de botões e se coloca acima dela.
+    const colunaBtn = document.getElementById(BTN_ID + '_wrap');
+    const alturaColuna = colunaBtn ? colunaBtn.offsetHeight : 44;
+    ui.style.bottom = (20 + alturaColuna + 12) + 'px';
+
     document.body.appendChild(ui);
     return ui;
   }
@@ -1239,10 +1245,12 @@
     logAuto(`Auto-run ativo: a cada ${label}.`);
 
     // Mostra aviso com opção de cancelar antes de executar
+    // v3.0: o aviso era position:fixed em bottom:60px e caía exatamente em cima
+    // do indicador. Agora ele entra na MESMA coluna flex dos botões, então o
+    // próprio layout resolve o empilhamento — sem número mágico de posição.
     const aviso = document.createElement('div');
     aviso.id = '__vt_auto_aviso__';
     Object.assign(aviso.style, {
-      position: 'fixed', bottom: '60px', left: '20px', zIndex: '99998',
       background: '#1a1a2a', border: '1px solid #3a3a6a', borderRadius: '10px',
       padding: '10px 16px', fontFamily: 'monospace', fontSize: '12px',
       color: '#9a9aff', display: 'flex', alignItems: 'center', gap: '10px',
@@ -1267,7 +1275,17 @@
       logAuto('Auto-run cancelado pelo usuário.');
     });
     aviso.appendChild(btnCancel);
-    document.body.appendChild(aviso);
+    const coluna = document.getElementById(BTN_ID + '_wrap');
+    if (coluna) {
+      coluna.prepend(aviso); // vai para o topo da coluna, acima do indicador
+    } else {
+      // Sem a coluna (botão ainda não montado), volta ao modo flutuante — mas
+      // alto o bastante para não cobrir a barra de botões.
+      Object.assign(aviso.style, {
+        position: 'fixed', bottom: '110px', left: '20px', zIndex: '99998',
+      });
+      document.body.appendChild(aviso);
+    }
 
     const iv = setInterval(() => {
       countdown--;
