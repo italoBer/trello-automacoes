@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ML — Painel de Atendimento
 // @namespace    empresa-ml-chat
-// @version      4.2
+// @version      4.3
 // @description  Painel de ações no chat do cliente ML
 // @match        https://*.mercadolivre.com.br/vendas/*/mensagens*
 // @match        https://*.mercadolibre.com.br/vendas/*/mensagens*
@@ -237,14 +237,39 @@
     }
 
     // fetch nativo primeiro (não depende do Tampermonkey); GM de reserva p/ CSP restritiva
+    // Traduz o status HTTP do Trello para algo acionável. Antes, qualquer falha
+    // virava "❌ Erro" e não dava para saber se era credencial, quadro errado
+    // ou o Trello fora do ar — o manual manda ler o motivo, então ele precisa existir.
+    function descreveHttp(status) {
+        if (status === 401 || status === 403)
+            return `HTTP ${status} — chave ou token do Trello inválido/expirado. Recadastre em ⚙️.`;
+        if (status === 404)
+            return "HTTP 404 — não encontrado. Confira o Board ID, ou se o card/lista foi apagado.";
+        if (status === 429)
+            return "HTTP 429 — limite de requisições do Trello. Espere um minuto e tente de novo.";
+        if (status >= 500)
+            return `HTTP ${status} — Trello fora do ar ou instável. Tente mais tarde.`;
+        return `HTTP ${status}`;
+    }
+
     function api(method, path, body) {
         const sep = path.includes("?") ? "&" : "?";
         const url = `https://api.trello.com/1${path}${sep}key=${getKey()}&token=${getToken()}`;
         const opts = { method, headers: { "Content-Type": "application/json" } };
         if (body) opts.body = JSON.stringify(body);
         return fetch(url, opts)
-            .then(r => r.text().then(t => t ? JSON.parse(t) : {}))
-            .catch(() => new Promise((resolve, reject) => {
+            .then(async r => {
+                if (!r.ok) {
+                    const err = new Error(descreveHttp(r.status));
+                    err.http = r.status;
+                    throw err;
+                }
+                const t = await r.text();
+                return t ? JSON.parse(t) : {};
+            })
+            .catch(err => {
+                if (err && err.http) throw err; // erro do Trello: repetir não resolve
+                return new Promise((resolve, reject) => {
                 if (typeof GM_xmlhttpRequest === "undefined") return reject(new Error("sem rede"));
                 GM_xmlhttpRequest({
                     method, url,
@@ -255,7 +280,8 @@
                     onload: r => { try { resolve(r.responseText ? JSON.parse(r.responseText) : {}); } catch(e) { reject(e); } },
                     onerror: reject
                 });
-            }));
+                });
+            });
     }
 
     function getVendaId() {
@@ -504,7 +530,7 @@
                 await moverCard(card.id, listaId);
                 statusEl.innerHTML = `<span style="color:#ccc">✅ ${listaNome}</span>`;
                 toast(`✅ ${listaNome}`);
-            } catch { toast("❌ Erro ao mover card", "erro"); }
+            } catch (e) { toast("❌ Erro ao mover card — " + (e && e.message ? e.message : e), "erro"); }
         }
 
         // Mover com confirmação obrigatória
@@ -525,7 +551,7 @@
                             : await adicionarEtiqueta(card.id, etqSemLogo.id);
                         toast(`🏷️ Etiqueta ${cardTemSemLogo ? "removida" : "adicionada"}`);
                         statusEl.innerHTML = `<span style="color:#90a4ae">🏷️ Etiqueta atualizada</span>`;
-                    } catch { toast("❌ Erro", "erro"); }
+                    } catch (e) { toast("❌ Erro na etiqueta — " + (e && e.message ? e.message : e), "erro"); }
                 }
             );
         }
@@ -725,7 +751,7 @@
                     }));
                     statusEl.innerHTML = `<span style="color:#ce93d8">🏷️ Mais compras + sem logo: ${todos.length} card(s)</span>`;
                     toast(`🏷️ ${todos.length} card(s) marcados (mais compras + sem logo)`);
-                } catch { toast("❌ Erro ao rastrear", "erro"); }
+                } catch (e) { toast("❌ Erro ao rastrear — " + (e && e.message ? e.message : e), "erro"); }
             }));
         }
     }

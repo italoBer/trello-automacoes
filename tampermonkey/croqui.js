@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trello — Gerador de Croqui
 // @namespace    empresa-croqui
-// @version      7.4
+// @version      7.5
 // @description  Gera folha de croqui a partir do card aberto no Trello
 // @match        https://trello.com/b/*
 // @match        https://trello.com/c/*
@@ -75,19 +75,45 @@
     }
 
     // fetch nativo primeiro (não depende do Tampermonkey); GM de reserva p/ CSP restritiva
+    // Traduz o status HTTP do Trello para algo acionável. Antes, qualquer falha
+    // virava "❌ Erro" e não dava para saber se era credencial, quadro errado
+    // ou o Trello fora do ar — o manual manda ler o motivo, então ele precisa existir.
+    function descreveHttp(status) {
+        if (status === 401 || status === 403)
+            return `HTTP ${status} — chave ou token do Trello inválido/expirado. Recadastre em ⚙️.`;
+        if (status === 404)
+            return "HTTP 404 — não encontrado. Confira o Board ID, ou se o card/lista foi apagado.";
+        if (status === 429)
+            return "HTTP 429 — limite de requisições do Trello. Espere um minuto e tente de novo.";
+        if (status >= 500)
+            return `HTTP ${status} — Trello fora do ar ou instável. Tente mais tarde.`;
+        return `HTTP ${status}`;
+    }
+
     function apiGet(path) {
         const sep = path.includes("?") ? "&" : "?";
         const url = `https://api.trello.com/1${path}${sep}key=${getKey()}&token=${getToken()}`;
         return fetch(url)
-            .then(r => r.text().then(t => t ? JSON.parse(t) : {}))
-            .catch(() => new Promise((resolve, reject) => {
-                if (typeof GM_xmlhttpRequest === "undefined") return reject(new Error("sem rede"));
-                GM_xmlhttpRequest({
-                    method: "GET", url,
-                    onload: r => { try { resolve(JSON.parse(r.responseText)); } catch(e) { reject(e); } },
-                    onerror: reject
+            .then(async r => {
+                if (!r.ok) {
+                    const err = new Error(descreveHttp(r.status));
+                    err.http = r.status;
+                    throw err;
+                }
+                const t = await r.text();
+                return t ? JSON.parse(t) : {};
+            })
+            .catch(err => {
+                if (err && err.http) throw err; // erro do Trello: repetir não resolve
+                return new Promise((resolve, reject) => {
+                    if (typeof GM_xmlhttpRequest === "undefined") return reject(new Error("sem rede"));
+                    GM_xmlhttpRequest({
+                        method: "GET", url,
+                        onload: r => { try { resolve(JSON.parse(r.responseText)); } catch(e) { reject(e); } },
+                        onerror: reject
+                    });
                 });
-            }));
+            });
     }
 
     // =========================

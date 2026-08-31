@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Scripts Empresa (Unificado)
 // @namespace    empresa
-// @version      5.6
+// @version      5.7
 // @description  Automações Trello
 // @match        https://trello.com/b/*
 // @grant        GM_xmlhttpRequest
@@ -190,19 +190,45 @@
 
     // Leitura (GET) — usa fetch nativo (rede da própria página, não depende do
     // Tampermonkey). GM_xmlhttpRequest fica de reserva p/ páginas com CSP restritiva.
+    // Traduz o status HTTP do Trello para algo acionável. Antes, qualquer falha
+    // virava "❌ Erro" e não dava para saber se era credencial, quadro errado
+    // ou o Trello fora do ar — o manual manda ler o motivo, então ele precisa existir.
+    function descreveHttp(status) {
+        if (status === 401 || status === 403)
+            return `HTTP ${status} — chave ou token do Trello inválido/expirado. Recadastre em ⚙️.`;
+        if (status === 404)
+            return "HTTP 404 — não encontrado. Confira o Board ID, ou se o card/lista foi apagado.";
+        if (status === 429)
+            return "HTTP 429 — limite de requisições do Trello. Espere um minuto e tente de novo.";
+        if (status >= 500)
+            return `HTTP ${status} — Trello fora do ar ou instável. Tente mais tarde.`;
+        return `HTTP ${status}`;
+    }
+
     function api(path) {
         const sep = path.includes("?") ? "&" : "?";
         const url = `https://api.trello.com/1${path}${sep}key=${API_KEY}&token=${API_TOKEN}`;
         return fetch(url)
-            .then(r => r.text().then(t => t ? JSON.parse(t) : {}))
-            .catch(() => new Promise((resolve, reject) => {
-                if (typeof GM_xmlhttpRequest === "undefined") return reject(new Error("sem rede"));
-                GM_xmlhttpRequest({
-                    method: "GET", url,
-                    onload: res => { try { resolve(JSON.parse(res.responseText)); } catch(e) { reject(e); } },
-                    onerror: reject
+            .then(async r => {
+                if (!r.ok) {
+                    const err = new Error(descreveHttp(r.status));
+                    err.http = r.status;
+                    throw err;
+                }
+                const t = await r.text();
+                return t ? JSON.parse(t) : {};
+            })
+            .catch(err => {
+                if (err && err.http) throw err; // erro do Trello: repetir não resolve
+                return new Promise((resolve, reject) => {
+                    if (typeof GM_xmlhttpRequest === "undefined") return reject(new Error("sem rede"));
+                    GM_xmlhttpRequest({
+                        method: "GET", url,
+                        onload: res => { try { resolve(JSON.parse(res.responseText)); } catch(e) { reject(e); } },
+                        onerror: reject
+                    });
                 });
-            }));
+            });
     }
 
     // Escrita (PUT/POST/DELETE) — mesma estratégia: fetch primeiro, GM de reserva.
@@ -473,7 +499,7 @@ ${linhas}
             if (plat === "ml") { alert("⚠️ Você está no quadro do ML!\nAcesse o quadro da Shopee para ver as métricas dela."); return; }
             const tabela = await buscarTabelaMetricas(LISTAS_SHOPEE);
             abrirJanelaMetricas(tabela, "MÉTRICAS SHOPEE", "#ff9800", 7, 3);
-        } catch { alert("❌ Erro ao buscar dados. Verifique suas credenciais."); }
+        } catch (e) { alert("❌ Erro ao buscar dados.\n\n" + (e && e.message ? e.message : e)); }
     }
 
     // =========================
@@ -486,7 +512,7 @@ ${linhas}
             if (plat === "ml") { alert("⚠️ Você está no quadro do ML!\nAcesse o quadro da Shopee para ver as métricas dela."); return; }
             const tabela = await buscarTabelaMetricas(LISTAS_SHOPEE);
             abrirJanelaMetricas(tabela, "MÉTRICAS SHOPEE", "#ff9800", 14, 3);
-        } catch { alert("❌ Erro ao buscar dados. Verifique suas credenciais."); }
+        } catch (e) { alert("❌ Erro ao buscar dados.\n\n" + (e && e.message ? e.message : e)); }
     }
 
     // =========================
@@ -499,7 +525,7 @@ ${linhas}
             if (plat === "shopee") { alert("⚠️ Você está no quadro da Shopee!\nAcesse o quadro do ML para ver as métricas dele."); return; }
             const tabela = await buscarTabelaMetricas(LISTAS_ML);
             abrirJanelaMetricas(tabela, "MÉTRICAS MERCADO LIVRE", "#ffde21", 7);
-        } catch { alert("❌ Erro ao buscar dados. Verifique suas credenciais."); }
+        } catch (e) { alert("❌ Erro ao buscar dados.\n\n" + (e && e.message ? e.message : e)); }
     }
 
     // =========================
@@ -512,7 +538,7 @@ ${linhas}
             if (plat === "shopee") { alert("⚠️ Você está no quadro da Shopee!\nAcesse o quadro do ML para ver as métricas dele."); return; }
             const tabela = await buscarTabelaMetricas(LISTAS_ML);
             abrirJanelaMetricas(tabela, "MÉTRICAS MERCADO LIVRE", "#ffde21", 14);
-        } catch { alert("❌ Erro ao buscar dados. Verifique suas credenciais."); }
+        } catch (e) { alert("❌ Erro ao buscar dados.\n\n" + (e && e.message ? e.message : e)); }
     }
 
     // =========================
@@ -703,7 +729,7 @@ ${s1}${s2}${s3}${s4}
 
         let lists;
         try { lists = await api(`/boards/${boardId}/lists`); }
-        catch { return alert("❌ Erro ao buscar listas."); }
+        catch (e) { return alert("❌ Erro ao buscar listas.\n\n" + (e && e.message ? e.message : e)); }
 
         if (document.getElementById("overlay-fluxo")) return;
 
@@ -1036,7 +1062,7 @@ ${s1}${s2}${s3}${s4}
         // Buscar listas do board
         let lists;
         try { lists = await api(`/boards/${boardId}/lists`); }
-        catch { return alert("❌ Erro ao buscar listas."); }
+        catch (e) { return alert("❌ Erro ao buscar listas.\n\n" + (e && e.message ? e.message : e)); }
 
         // Montar overlay de seleção
         if (document.getElementById("overlay-abrirml")) return;
@@ -1188,7 +1214,7 @@ ${s1}${s2}${s3}${s4}
 
         let lists;
         try { lists = await api(`/boards/${boardId}/lists`); }
-        catch { return alert("❌ Erro ao buscar listas."); }
+        catch (e) { return alert("❌ Erro ao buscar listas.\n\n" + (e && e.message ? e.message : e)); }
 
         if (document.getElementById("overlay-movercards")) return;
         const overlay = document.createElement("div");
